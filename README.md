@@ -241,11 +241,15 @@ and define how implementation completion is determined.
 
 The authoritative behavioral specification is located at:
 
-    https://raw.githubusercontent.com/auto-d/behave/main/protocol.md
+    https://raw.githubusercontent.com/auto-d/behave/main/README.md
 
 Validate it with:
 
     https://raw.githubusercontent.com/auto-d/behave/main/validate.py
+
+This project's behavior is codified in
+
+   <path to your spec>
 
 Treat the behavioral specification as the authoritative description of the
 system's currently intended external behavior.

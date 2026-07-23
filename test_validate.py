@@ -96,7 +96,7 @@ Second.
 
 #### References
 
-- `protocol.md`
+- `README.md`
 
 #### Behavior
 

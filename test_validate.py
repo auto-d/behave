@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import io
+import json
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 import validate
@@ -314,6 +317,135 @@ It should work.
 
         self.assertEqual(["REF002"], [item.code for item in diagnostics])
         self.assertIn("missing.md", diagnostics[0].message)
+
+
+class RequirementExtractionTests(unittest.TestCase):
+    document = """# Contract
+
+### R-FIRST
+
+#### Intent
+
+First intent.
+
+#### Behavior
+
+- First behavior.
+  - Evaluate [manual]: Inspect.
+
+### R-SECOND
+
+#### Intent
+
+Second intent.
+
+#### Behavior
+
+- Second behavior.
+  - Evaluate [manual]: Inspect.
+"""
+
+    def test_extracts_exact_requirement_boundaries(self) -> None:
+        excerpts = validate.requirement_excerpts(
+            Path("contract.md"),
+            self.document,
+            "R-FIRST",
+        )
+
+        self.assertEqual(1, len(excerpts))
+        self.assertEqual(3, excerpts[0].line)
+        self.assertTrue(excerpts[0].markdown.startswith("### R-FIRST\n"))
+        self.assertNotIn("R-SECOND", excerpts[0].markdown)
+
+    def test_extracts_last_requirement_through_end_of_file(self) -> None:
+        excerpt = validate.requirement_excerpts(
+            Path("contract.md"),
+            self.document,
+            "R-SECOND",
+        )[0]
+
+        self.assertIn("Second behavior.", excerpt.markdown)
+        self.assertTrue(excerpt.markdown.endswith("\n"))
+
+    def test_missing_requirement_returns_no_excerpt(self) -> None:
+        self.assertEqual(
+            [],
+            validate.requirement_excerpts(
+                Path("contract.md"),
+                self.document,
+                "R-MISSING",
+            ),
+        )
+
+    def test_duplicate_requirement_is_ambiguous(self) -> None:
+        duplicate = self.document + "\n" + self.document
+
+        self.assertEqual(
+            2,
+            len(
+                validate.requirement_excerpts(
+                    Path("contract.md"),
+                    duplicate,
+                    "R-FIRST",
+                )
+            ),
+        )
+
+    def test_cli_prints_markdown_and_json(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            contract = Path(directory) / "contract.md"
+            contract.write_text(self.document, encoding="utf-8")
+
+            plain_output = io.StringIO()
+            with redirect_stdout(plain_output):
+                plain_status = validate.main(
+                    ["--show-requirement", "R-FIRST", str(contract)]
+                )
+
+            json_output = io.StringIO()
+            with redirect_stdout(json_output):
+                json_status = validate.main(
+                    [
+                        "--json",
+                        "--show-requirement",
+                        "R-SECOND",
+                        str(contract),
+                    ]
+                )
+
+        self.assertEqual(0, plain_status)
+        self.assertTrue(plain_output.getvalue().startswith("### R-FIRST\n"))
+        self.assertEqual(0, json_status)
+        payload = json.loads(json_output.getvalue())
+        self.assertEqual("R-SECOND", payload["identifier"])
+        self.assertEqual(14, payload["line"])
+        self.assertIn("Second behavior.", payload["markdown"])
+
+    def test_cli_reports_missing_and_duplicate_requirements(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            contract = Path(directory) / "contract.md"
+            contract.write_text(self.document, encoding="utf-8")
+
+            missing_error = io.StringIO()
+            with redirect_stderr(missing_error):
+                missing_status = validate.main(
+                    ["--show-requirement", "R-MISSING", str(contract)]
+                )
+
+            contract.write_text(
+                self.document + "\n" + self.document,
+                encoding="utf-8",
+            )
+            duplicate_error = io.StringIO()
+            with redirect_stderr(duplicate_error):
+                duplicate_status = validate.main(
+                    ["--show-requirement", "R-FIRST", str(contract)]
+                )
+
+        self.assertEqual(1, missing_status)
+        self.assertIn("R005", missing_error.getvalue())
+        self.assertEqual(1, duplicate_status)
+        self.assertIn("R002", duplicate_error.getvalue())
 
 
 if __name__ == "__main__":

@@ -35,6 +35,7 @@ from urllib.request import Request, urlopen
 
 
 REQUIREMENT_RE = re.compile(r"^###\s+(R-[A-Z0-9][A-Z0-9-]*)\s*$")
+REQUIREMENT_ID_RE = re.compile(r"^R-[A-Z0-9][A-Z0-9-]*$")
 LEVEL_THREE_RE = re.compile(r"^###(?:\s+.*)?$")
 SECTION_RE = re.compile(r"^####\s+(Intent|Rationale|References|Behavior)\s*$")
 LEVEL_FOUR_RE = re.compile(r"^####(?:\s+(?P<name>.*\S))?\s*$")
@@ -108,6 +109,14 @@ class ExternalReference:
 class LocalReference:
     line: int
     target: str
+
+
+@dataclass(frozen=True)
+class RequirementExcerpt:
+    identifier: str
+    path: str
+    line: int
+    markdown: str
 
 
 def indentation_width(value: str) -> int:
@@ -470,6 +479,39 @@ def validate_file(path: Path) -> list[Diagnostic]:
     return validate_text(path, text)
 
 
+def requirement_excerpts(
+    path: Path,
+    text: str,
+    identifier: str,
+) -> list[RequirementExcerpt]:
+    """Return exact requirement blocks matching an identifier."""
+    lines = text.splitlines()
+    matches: list[RequirementExcerpt] = []
+
+    for index, raw in enumerate(lines):
+        match = REQUIREMENT_RE.match(raw)
+        if not match or match.group(1) != identifier:
+            continue
+
+        end_index = len(lines)
+        for candidate in range(index + 1, len(lines)):
+            if LEVEL_THREE_RE.match(lines[candidate]):
+                end_index = candidate
+                break
+
+        markdown = "\n".join(lines[index:end_index]).rstrip() + "\n"
+        matches.append(
+            RequirementExcerpt(
+                identifier=identifier,
+                path=str(path),
+                line=index + 1,
+                markdown=markdown,
+            )
+        )
+
+    return matches
+
+
 def reference_lines(text: str) -> list[tuple[int, str]]:
     """Return list-item contents declared in References sections."""
     lines: list[tuple[int, str]] = []
@@ -646,11 +688,75 @@ def build_parser() -> argparse.ArgumentParser:
         default=10.0,
         help="network timeout in seconds for each external reference (default: 10)",
     )
+    parser.add_argument(
+        "--show-requirement",
+        metavar="R-ID",
+        help="print one requirement block from exactly one specification file",
+    )
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+
+    if args.show_requirement:
+        if not REQUIREMENT_ID_RE.fullmatch(args.show_requirement):
+            build_parser().error(
+                "--show-requirement expects an identifier such as R-EXAMPLE"
+            )
+        if len(args.paths) != 1 or args.paths[0].is_dir():
+            build_parser().error(
+                "--show-requirement requires exactly one Markdown file"
+            )
+        if args.check_references or args.check_external_references:
+            build_parser().error(
+                "--show-requirement cannot be combined with reference checks"
+            )
+
+        path = args.paths[0]
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            diagnostic = Diagnostic(
+                str(path),
+                1,
+                "IO001",
+                f"could not read file: {exc}",
+            )
+            if args.json:
+                print(json.dumps([asdict(diagnostic)], indent=2))
+            else:
+                print(diagnostic.render(), file=sys.stderr)
+            return 1
+
+        matches = requirement_excerpts(path, text, args.show_requirement)
+        if len(matches) != 1:
+            if matches:
+                line = matches[1].line
+                code = "R002"
+                message = (
+                    f"duplicate requirement identifier {args.show_requirement}; "
+                    f"first declared on line {matches[0].line}"
+                )
+            else:
+                line = 1
+                code = "R005"
+                message = f"requirement {args.show_requirement} was not found"
+
+            diagnostic = Diagnostic(str(path), line, code, message)
+            if args.json:
+                print(json.dumps([asdict(diagnostic)], indent=2))
+            else:
+                print(diagnostic.render(), file=sys.stderr)
+            return 1
+
+        excerpt = matches[0]
+        if args.json:
+            print(json.dumps(asdict(excerpt), indent=2))
+        else:
+            sys.stdout.write(excerpt.markdown)
+        return 0
+
     files = iter_markdown_files(args.paths)
 
     if not files:

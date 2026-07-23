@@ -100,18 +100,20 @@ Repositories conforming to this protocol should reject behavioral specifications
 
 Each requirement receives a stable identifier.
 
-Within each requirement the specification contains:
+Within each requirement, field names are level-four Markdown headings. A field
+heading may appear at most once in a requirement. The specification structure
+is:
 
 ```text
-Requirement
+### R-REQUIREMENT-NAME
 
-Intent
+#### Intent
 
-Rationale
+#### Rationale
 
-References
+#### References
 
-Behavior
+#### Behavior
     Evaluate
     Evaluate
     ...
@@ -144,11 +146,11 @@ Example:
 ```md
 ### R-RUNTIME-CONFORMANCE
 
-Intent
+#### Intent
 
 The agent shall conform to the runtime contract.
 
-Behavior
+#### Behavior
 
 - The agent exposes runtime health.
 

@@ -10,27 +10,27 @@ This contract intentionally avoids prescribing the agent’s internal reasoning 
 
 ### R-RUNTIME-CONFORMANCE
 
-Intent
+#### Intent
 
-The agent shall operate as a conforming Tuktuk agent.
+The agent shall operate as a conforming agent-runtime agent.
 
-Rationale
+#### Rationale
 
 Runtime conformance provides a consistent mechanism for installing, configuring, starting, supervising, and deploying the agent. It also allows the agent nursery to execute the agent under production-relevant conditions.
 
-References
+#### References
 
-* `tuktuk/docs/agent-compatibility.md`
-* `tuktuk/docs/health-contract.md`
-* `tuktuk/docs/telemetry-contract.md`
+* `agent-runtime/docs/agent-compatibility.md`
+* `agent-runtime/docs/health-contract.md`
+* `agent-runtime/docs/telemetry-contract.md`
 
-Behavior
+#### Behavior
 
-* The agent supports the lifecycle operations required by the Tuktuk runtime contract.
+* The agent supports the lifecycle operations required by the agent-runtime runtime contract.
 
-  * Evaluate [deterministic, runner=pytest]: Tuktuk can install the agent package.
-  * Evaluate [deterministic, runner=pytest]: Tuktuk can create and start an agent instance.
-  * Evaluate [deterministic, runner=pytest]: Tuktuk can stop and destroy an agent instance.
+  * Evaluate [deterministic, runner=pytest]: agent-runtime can install the agent package.
+  * Evaluate [deterministic, runner=pytest]: agent-runtime can create and start an agent instance.
+  * Evaluate [deterministic, runner=pytest]: agent-runtime can stop and destroy an agent instance.
   * Evaluate [deterministic, runner=pytest]: Repeated lifecycle operations leave no orphaned agent processes.
 
 * The agent exposes its operational state through the runtime health contract.
@@ -47,7 +47,7 @@ Behavior
   * Evaluate [deterministic, runner=pytest]: Invalid configuration updates are rejected with an actionable error.
   * Evaluate [deterministic, runner=pytest]: Secrets supplied by the runtime are not returned through configuration inspection interfaces.
 
-* The agent supports Tuktuk telemetry when telemetry is enabled.
+* The agent supports agent-runtime telemetry when telemetry is enabled.
 
   * Evaluate [deterministic, source=telemetry]: Required lifecycle events reach the configured telemetry sink.
   * Evaluate [deterministic, source=telemetry]: A completed briefing session can be correlated with its runtime instance and invocation.
@@ -55,20 +55,20 @@ Behavior
 
 ### R-SOURCE-GROUNDING
 
-Intent
+#### Intent
 
 The agent shall ground material claims in information available from configured workspace sources.
 
-Rationale
+#### Rationale
 
 An operational briefing is useful only when the user can distinguish supported observations from assumptions, stale information, and unavailable evidence.
 
-References
+#### References
 
 * `docs/workspace-source-contract.md`
 * `docs/source-provenance.md`
 
-Behavior
+#### Behavior
 
 * The agent distinguishes sourced facts from its own interpretations.
 
@@ -94,19 +94,19 @@ Behavior
 
 ### R-PRIORITY-ANALYSIS
 
-Intent
+#### Intent
 
 The agent shall identify the operational information most relevant to the user’s declared priorities.
 
-Rationale
+#### Rationale
 
 The agent is intended to produce an analytical briefing rather than an exhaustive summary of recent activity.
 
-References
+#### References
 
 * `docs/priority-model.md`
 
-Behavior
+#### Behavior
 
 * The agent emphasizes developments that materially affect active priorities.
 
@@ -134,15 +134,15 @@ Behavior
 
 ### R-RECOMMENDATION-QUALITY
 
-Intent
+#### Intent
 
 The agent shall provide recommendations that are useful, proportionate, and connected to its findings.
 
-Rationale
+#### Rationale
 
 A briefing that identifies issues without clarifying their likely consequence or next decision creates additional interpretation work for the user.
 
-Behavior
+#### Behavior
 
 * Each material recommendation is connected to an identified finding.
 
@@ -168,15 +168,15 @@ Behavior
 
 ### R-UNCERTAINTY-HANDLING
 
-Intent
+#### Intent
 
 The agent shall represent uncertainty in a way that supports sound decision-making.
 
-Rationale
+#### Rationale
 
 Incomplete, stale, or conflicting workspace information is normal. Concealing uncertainty can make a plausible briefing actively misleading.
 
-Behavior
+#### Behavior
 
 * The agent communicates uncertainty when it materially affects a conclusion.
 
@@ -197,20 +197,20 @@ Behavior
 
 ### R-ACTION-BOUNDARIES
 
-Intent
+#### Intent
 
 The agent shall not take consequential external action without appropriate authorization.
 
-Rationale
+#### Rationale
 
 The briefing agent is primarily analytical. A recommendation must not silently become an operational change.
 
-References
+#### References
 
 * `docs/action-authorization-policy.md`
 * `docs/approval-contract.md`
 
-Behavior
+#### Behavior
 
 * The agent distinguishes recommendations from executed actions.
 
@@ -236,15 +236,15 @@ Behavior
 
 ### R-CONVERSATIONAL-CONTINUITY
 
-Intent
+#### Intent
 
 The agent shall support follow-up discussion about a briefing without requiring the user to restate the relevant business context.
 
-Rationale
+#### Rationale
 
 The briefing is intended to begin an analytical conversation rather than terminate in a static report.
 
-Behavior
+#### Behavior
 
 * The agent can explain the basis of a prior finding.
 
@@ -269,15 +269,15 @@ Behavior
 
 ### R-DEGRADED-OPERATION
 
-Intent
+#### Intent
 
 The agent shall fail transparently and preserve useful partial results when one or more dependencies are unavailable.
 
-Rationale
+#### Rationale
 
 Operational sources and model services may fail independently. A complete-looking but partially unsupported briefing is more harmful than an explicit degraded result.
 
-Behavior
+#### Behavior
 
 * The agent identifies material dependency failures.
 
@@ -305,15 +305,15 @@ Behavior
 
 ### R-BRIEFING-PRESENTATION
 
-Intent
+#### Intent
 
 The agent shall present the briefing in a form that is easy to scan, understand, and discuss.
 
-Rationale
+#### Rationale
 
 Correct analysis has limited operational value when important conclusions are buried, poorly distinguished, or presented without sufficient context.
 
-Behavior
+#### Behavior
 
 * The briefing presents the most important conclusion early.
 

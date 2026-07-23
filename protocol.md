@@ -241,11 +241,11 @@ and define how implementation completion is determined.
 
 The authoritative behavioral specification is located at:
 
-    <PATH-TO-BEHAVIOR-SPECIFICATION>
+    https://raw.githubusercontent.com/auto-d/behave/main/protocol.md
 
 Validate it with:
 
-    ~<BEHAVIOR-SPECIFICATION-VALIDATION-COMMAND~>
+    https://raw.githubusercontent.com/auto-d/behave/main/validate.py
 
 Treat the behavioral specification as the authoritative description of the
 system's currently intended external behavior.

@@ -154,9 +154,17 @@ Repositories adopting the protocol can add the following to `AGENTS.md`, `CLAUDE
 
 This project follows the Behavior Specification Protocol:
 
-    https://github.com/auto-d/behave
+    https://raw.githubusercontent.com/auto-d/behave/main/README.md
 
-The authoritative behavioral specification is:
+The reference validator is available at:
+
+    https://raw.githubusercontent.com/auto-d/behave/main/validate.py
+
+This repository vendors that validator at:
+
+    <path-to-validator>
+
+The authoritative behavioral specification for this project is:
 
     <path-to-project-specification>
 

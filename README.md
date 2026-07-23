@@ -63,9 +63,10 @@ The system exposes health and status.
 
 #### Behavior
 
-- The system reports its state through one or more HTTP endpoints.
+- The system reports its state through one or more HTTP endpoints with explanatory text.
 
-  - Evaluate [determinist]: Verify that the reported status produces common HTTP status codes.
+  - Evaluate [deterministic]: Verify that endpoint(s) produce common HTTP status codes.
+  - Evaluate [semantic, judge:llm]: Health explanations must be plain English and consistent with reported status codes. 
 ```
 
 A requirement has a stable `R-UPPERCASE-ID` and four recognized sections:

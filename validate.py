@@ -7,13 +7,15 @@ Current protocol rules enforced:
 1. The document contains at least one requirement heading:
        ### R-STABLE-IDENTIFIER
 2. Requirement identifiers are unique.
-3. Requirement fields use unique level-four Markdown headings.
-4. Each requirement contains a `#### Behavior` section.
-5. A `#### Behavior` section contains at least one behavior bullet.
-6. Every behavior bullet contains at least one nested `Evaluate` clause.
-7. Every `Evaluate` clause contains a non-empty evaluation statement.
-8. When an assessment type is supplied, it is recognized.
-9. Optionally, targets in `References` sections are fetchable or exist locally.
+3. Each requirement contains exactly one `#### Intent` and `#### Behavior`.
+4. Optional `#### Rationale` and `#### References` sections occur at most once.
+5. Unknown level-four requirement sections are rejected.
+6. Content inside a requirement belongs to a recognized section.
+7. A `#### Behavior` section contains at least one behavior bullet.
+8. Every behavior bullet contains at least one immediate child `Evaluate` clause.
+9. Every `Evaluate` clause contains a non-empty evaluation statement.
+10. When an assessment type is supplied, it is recognized.
+11. Optionally, targets in `References` sections are fetchable or exist locally.
 
 This intentionally does not validate evaluator bindings, tests, scenarios,
 evidence schemas, rubrics, or implementation conformance.
@@ -33,7 +35,9 @@ from urllib.request import Request, urlopen
 
 
 REQUIREMENT_RE = re.compile(r"^###\s+(R-[A-Z0-9][A-Z0-9-]*)\s*$")
+LEVEL_THREE_RE = re.compile(r"^###(?:\s+.*)?$")
 SECTION_RE = re.compile(r"^####\s+(Intent|Rationale|References|Behavior)\s*$")
+LEVEL_FOUR_RE = re.compile(r"^####(?:\s+(?P<name>.*\S))?\s*$")
 SECTION_KEYWORD_RE = re.compile(
     r"^(?:#{1,6}\s+)?(Intent|Rationale|References|Behavior)\s*:?\s*$"
 )
@@ -76,6 +80,13 @@ class Behavior:
     indent: int
     text: str
     evaluations: int = 0
+
+
+@dataclass(frozen=True)
+class ListContext:
+    indent: int
+    kind: str
+    line: int
 
 
 @dataclass
@@ -154,9 +165,10 @@ def validate_text(path: Path, text: str) -> list[Diagnostic]:
     requirement_ids: dict[str, int] = {}
 
     current_requirement: Requirement | None = None
-    in_behavior_section = False
+    current_section: str | None = None
     current_behavior: Behavior | None = None
     behavior_indent: int | None = None
+    list_context: list[ListContext] = []
 
     def close_behavior() -> None:
         nonlocal current_behavior
@@ -174,10 +186,19 @@ def validate_text(path: Path, text: str) -> list[Diagnostic]:
         current_behavior = None
 
     def close_requirement() -> None:
-        nonlocal current_requirement, in_behavior_section, behavior_indent
+        nonlocal current_requirement, current_section, behavior_indent
         close_behavior()
         if current_requirement is not None:
-            if not current_requirement.has_behavior_section:
+            if "Intent" not in current_requirement.sections:
+                diagnostics.append(
+                    Diagnostic(
+                        str(path),
+                        current_requirement.line,
+                        "R004",
+                        f"{current_requirement.identifier} has no Intent section",
+                    )
+                )
+            if "Behavior" not in current_requirement.sections:
                 diagnostics.append(
                     Diagnostic(
                         str(path),
@@ -196,8 +217,9 @@ def validate_text(path: Path, text: str) -> list[Diagnostic]:
                     )
                 )
         current_requirement = None
-        in_behavior_section = False
+        current_section = None
         behavior_indent = None
+        list_context.clear()
 
     for index, raw in enumerate(lines):
         line_number = index + 1
@@ -223,10 +245,11 @@ def validate_text(path: Path, text: str) -> list[Diagnostic]:
 
             current_requirement = Requirement(identifier, line_number)
             requirements.append(current_requirement)
+            current_section = None
             continue
 
-        # Catch malformed requirement-like headings explicitly.
-        if raw.startswith("### ") and stripped.startswith("### R-"):
+        # Level-three headings are reserved for requirements.
+        if LEVEL_THREE_RE.match(raw):
             diagnostics.append(
                 Diagnostic(
                     str(path),
@@ -256,16 +279,17 @@ def validate_text(path: Path, text: str) -> list[Diagnostic]:
                 else:
                     current_requirement.sections[label] = line_number
 
+            current_section = label if current_requirement is not None else None
             if label == "Behavior":
                 close_behavior()
-                in_behavior_section = current_requirement is not None
                 behavior_indent = None
+                list_context.clear()
                 if current_requirement is not None:
                     current_requirement.has_behavior_section = True
-            elif in_behavior_section:
+            else:
                 close_behavior()
-                in_behavior_section = False
                 behavior_indent = None
+                list_context.clear()
             continue
 
         malformed_section = SECTION_KEYWORD_RE.match(stripped)
@@ -279,13 +303,42 @@ def validate_text(path: Path, text: str) -> list[Diagnostic]:
                     f"a level-four heading",
                 )
             )
-            if in_behavior_section:
-                close_behavior()
-                in_behavior_section = False
-                behavior_indent = None
+            close_behavior()
+            current_section = "__invalid__"
+            behavior_indent = None
+            list_context.clear()
             continue
 
-        if not in_behavior_section or current_requirement is None:
+        level_four = LEVEL_FOUR_RE.match(raw)
+        if level_four and current_requirement is not None:
+            name = level_four.group("name") or ""
+            diagnostics.append(
+                Diagnostic(
+                    str(path),
+                    line_number,
+                    "S003",
+                    f"unknown requirement section `{name}`",
+                )
+            )
+            close_behavior()
+            current_section = "__unknown__"
+            behavior_indent = None
+            list_context.clear()
+            continue
+
+        if current_requirement is not None and current_section is None:
+            if stripped:
+                diagnostics.append(
+                    Diagnostic(
+                        str(path),
+                        line_number,
+                        "P001",
+                        "content inside a requirement must belong to a recognized section",
+                    )
+                )
+            continue
+
+        if current_section != "Behavior" or current_requirement is None:
             continue
 
         item = LIST_ITEM_RE.match(raw)
@@ -296,12 +349,13 @@ def validate_text(path: Path, text: str) -> list[Diagnostic]:
         item_text = item.group("text").strip()
         evaluate_match = EVALUATE_RE.match(item_text)
 
-        # The first ordinary bullet establishes the behavior-list indentation.
-        if behavior_indent is None and not evaluate_match:
+        # The first list item establishes the behavior-list indentation.
+        if behavior_indent is None:
             behavior_indent = indent
 
         if behavior_indent is not None and indent == behavior_indent:
             close_behavior()
+            list_context.clear()
 
             if evaluate_match:
                 diagnostics.append(
@@ -326,32 +380,39 @@ def validate_text(path: Path, text: str) -> list[Diagnostic]:
 
             current_behavior = Behavior(line_number, indent, item_text)
             current_requirement.behaviors += 1
+            list_context.append(
+                ListContext(indent, "behavior", line_number)
+            )
             continue
 
+        while list_context and list_context[-1].indent >= indent:
+            list_context.pop()
+        parent = list_context[-1] if list_context else None
+
         if evaluate_match:
-            if current_behavior is None:
+            if (
+                current_behavior is None
+                or parent is None
+                or parent.kind != "behavior"
+                or parent.line != current_behavior.line
+            ):
                 diagnostics.append(
                     Diagnostic(
                         str(path),
                         line_number,
                         "E001",
-                        "Evaluate clause is not nested beneath a behavior",
+                        "Evaluate clause must be an immediate child of a behavior",
                     )
                 )
-                continue
-
-            if indent <= current_behavior.indent:
-                diagnostics.append(
-                    Diagnostic(
-                        str(path),
-                        line_number,
-                        "E001",
-                        "Evaluate clause must be indented beneath its behavior",
-                    )
+                list_context.append(
+                    ListContext(indent, "evaluate", line_number)
                 )
                 continue
 
             current_behavior.evaluations += 1
+            list_context.append(
+                ListContext(indent, "evaluate", line_number)
+            )
 
             annotations = evaluate_match.group("annotations") or ""
             assessment_type = first_annotation_token(annotations)
@@ -376,6 +437,8 @@ def validate_text(path: Path, text: str) -> list[Diagnostic]:
                         "Evaluate clause has no evaluation statement",
                     )
                 )
+        else:
+            list_context.append(ListContext(indent, "other", line_number))
 
     close_requirement()
 
@@ -419,9 +482,12 @@ def reference_lines(text: str) -> list[tuple[int, str]]:
             in_references = False
             continue
 
-        section_match = SECTION_RE.match(raw)
-        if section_match:
-            in_references = section_match.group(1) == "References"
+        level_four = LEVEL_FOUR_RE.match(raw)
+        if level_four:
+            section_match = SECTION_RE.match(raw)
+            in_references = bool(
+                section_match and section_match.group(1) == "References"
+            )
             continue
 
         if in_references:

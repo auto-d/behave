@@ -100,9 +100,10 @@ Repositories conforming to this protocol should reject behavioral specifications
 
 Each requirement receives a stable identifier.
 
-Within each requirement, field names are level-four Markdown headings. A field
-heading may appear at most once in a requirement. The specification structure
-is:
+Within each requirement, field names are level-four Markdown headings.
+`Intent` and `Behavior` are required exactly once. `Rationale` and `References`
+are optional and may appear at most once. Other level-four headings are not
+permitted. The specification structure is:
 
 ```text
 ### R-REQUIREMENT-NAME
@@ -168,7 +169,14 @@ The agent shall conform to the runtime contract.
 
 Nested evaluations provide confidence that the enclosing behavior has been satisfied.
 
-The protocol intentionally permits multiple evaluations per behavior and multiple implementations of a single evaluation.
+Each top-level list item in a `Behavior` section is a behavioral expectation.
+Each `Evaluate` list item must be an immediate child of the behavior it
+evaluates. The protocol intentionally permits multiple evaluations per behavior
+and multiple implementations of a single evaluation.
+
+Document-level introductory content may precede the first requirement. Once a
+requirement begins, nonblank content must belong to one of its recognized
+sections.
 
 ## Evaluation Hints
 

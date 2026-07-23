@@ -391,6 +391,64 @@ Second intent.
             ),
         )
 
+    def test_lists_requirements_in_document_order(self) -> None:
+        summaries = validate.requirement_summaries(
+            Path("contract.md"),
+            self.document,
+        )
+
+        self.assertEqual(
+            ["R-FIRST", "R-SECOND"],
+            [summary.identifier for summary in summaries],
+        )
+        self.assertEqual([3, 14], [summary.line for summary in summaries])
+
+    def test_list_cli_prints_ids_and_json_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            contract = Path(directory) / "contract.md"
+            contract.write_text(self.document, encoding="utf-8")
+
+            plain_output = io.StringIO()
+            with redirect_stdout(plain_output):
+                plain_status = validate.main(
+                    ["--list-requirements", str(contract)]
+                )
+
+            json_output = io.StringIO()
+            with redirect_stdout(json_output):
+                json_status = validate.main(
+                    ["--json", "--list-requirements", str(contract)]
+                )
+
+        self.assertEqual(0, plain_status)
+        self.assertEqual(
+            ["R-FIRST", "R-SECOND"],
+            plain_output.getvalue().splitlines(),
+        )
+        self.assertEqual(0, json_status)
+        payload = json.loads(json_output.getvalue())
+        self.assertEqual(
+            ["R-FIRST", "R-SECOND"],
+            [item["identifier"] for item in payload],
+        )
+        self.assertEqual([3, 14], [item["line"] for item in payload])
+        self.assertTrue(all(item["path"] == str(contract) for item in payload))
+
+    def test_list_cli_preserves_duplicate_ids(self) -> None:
+        duplicate = self.document + "\n" + self.document
+        with tempfile.TemporaryDirectory() as directory:
+            contract = Path(directory) / "contract.md"
+            contract.write_text(duplicate, encoding="utf-8")
+
+            output = io.StringIO()
+            with redirect_stdout(output):
+                status = validate.main(
+                    ["--list-requirements", str(contract)]
+                )
+
+        self.assertEqual(0, status)
+        self.assertEqual(2, output.getvalue().splitlines().count("R-FIRST"))
+
     def test_cli_prints_markdown_and_json(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             contract = Path(directory) / "contract.md"

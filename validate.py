@@ -119,6 +119,13 @@ class RequirementExcerpt:
     markdown: str
 
 
+@dataclass(frozen=True)
+class RequirementSummary:
+    identifier: str
+    path: str
+    line: int
+
+
 def indentation_width(value: str) -> int:
     """Treat a tab as four spaces for structural comparison."""
     return sum(4 if char == "\t" else 1 for char in value)
@@ -512,6 +519,25 @@ def requirement_excerpts(
     return matches
 
 
+def requirement_summaries(
+    path: Path,
+    text: str,
+) -> list[RequirementSummary]:
+    """Return valid requirement headings in document order."""
+    summaries: list[RequirementSummary] = []
+    for index, raw in enumerate(text.splitlines()):
+        match = REQUIREMENT_RE.match(raw)
+        if match:
+            summaries.append(
+                RequirementSummary(
+                    identifier=match.group(1),
+                    path=str(path),
+                    line=index + 1,
+                )
+            )
+    return summaries
+
+
 def reference_lines(text: str) -> list[tuple[int, str]]:
     """Return list-item contents declared in References sections."""
     lines: list[tuple[int, str]] = []
@@ -688,10 +714,16 @@ def build_parser() -> argparse.ArgumentParser:
         default=10.0,
         help="network timeout in seconds for each external reference (default: 10)",
     )
-    parser.add_argument(
+    query_group = parser.add_mutually_exclusive_group()
+    query_group.add_argument(
         "--show-requirement",
         metavar="R-ID",
         help="print one requirement block from exactly one specification file",
+    )
+    query_group.add_argument(
+        "--list-requirements",
+        action="store_true",
+        help="list requirement identifiers from exactly one specification file",
     )
     return parser
 
@@ -699,18 +731,20 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
-    if args.show_requirement:
-        if not REQUIREMENT_ID_RE.fullmatch(args.show_requirement):
+    if args.show_requirement or args.list_requirements:
+        if args.show_requirement and not REQUIREMENT_ID_RE.fullmatch(
+            args.show_requirement
+        ):
             build_parser().error(
                 "--show-requirement expects an identifier such as R-EXAMPLE"
             )
         if len(args.paths) != 1 or args.paths[0].is_dir():
             build_parser().error(
-                "--show-requirement requires exactly one Markdown file"
+                "requirement queries require exactly one Markdown file"
             )
         if args.check_references or args.check_external_references:
             build_parser().error(
-                "--show-requirement cannot be combined with reference checks"
+                "requirement queries cannot be combined with reference checks"
             )
 
         path = args.paths[0]
@@ -728,6 +762,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             else:
                 print(diagnostic.render(), file=sys.stderr)
             return 1
+
+        if args.list_requirements:
+            summaries = requirement_summaries(path, text)
+            if args.json:
+                print(
+                    json.dumps(
+                        [asdict(summary) for summary in summaries],
+                        indent=2,
+                    )
+                )
+            else:
+                for summary in summaries:
+                    print(summary.identifier)
+            return 0
 
         matches = requirement_excerpts(path, text, args.show_requirement)
         if len(matches) != 1:

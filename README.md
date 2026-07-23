@@ -120,15 +120,17 @@ python3 validate.py --json behavior.md
 
 It checks requirement IDs, required and duplicate sections, unknown sections, stray requirement content, behavior/evaluation nesting, nonempty evaluation statements, and recognized assessment types.
 
-Retrieve one requirement without reading the full specification:
+List requirements, then retrieve one without reading the full specification:
 
 ```sh
+python3 validate.py --list-requirements behavior.md
 python3 validate.py --show-requirement R-RUNTIME-CONFORMANCE behavior.md
+python3 validate.py --json --list-requirements behavior.md
 python3 validate.py --json --show-requirement R-RUNTIME-CONFORMANCE behavior.md
 ```
 
-Extraction matches the ID exactly, requires one specification file, and fails
-when the requirement is absent or duplicated.
+Queries require one specification file and preserve document order. Extraction
+matches the ID exactly and fails when the requirement is absent or duplicated.
 
 Reference checks are opt-in:
 
@@ -182,8 +184,9 @@ Validate it with:
 
     python3 <path-to-validator> <path-to-project-specification>
 
-Inspect one requirement at a time with:
+List and inspect requirements with:
 
+    python3 <path-to-validator> --list-requirements <path-to-project-specification>
     python3 <path-to-validator> --show-requirement R-ID <path-to-project-specification>
 
 Treat the specification as the authoritative description of intended external behavior. When user intent introduces, changes, or contradicts behavior, update the specification before considering the related implementation complete.

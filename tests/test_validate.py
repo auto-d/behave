@@ -271,7 +271,7 @@ It should work.
 #### Behavior
 
 - The system grounds its conclusions.
-  - Evaluate [evidence=calendar, tasks]: Evidence demonstrates that each conclusion is supported by the available records."""
+  - Evaluate [evidence=calendar, tasks]: Each conclusion is supported by the available records."""
         )
 
         self.assertEqual([], codes(text))

@@ -65,8 +65,8 @@ The system exposes health and status.
 
 - The system reports its state through one or more HTTP endpoints with explanatory text.
 
-  - Evaluate: Evidence demonstrates that each endpoint produces a documented HTTP status code.
-  - Evaluate: Evidence demonstrates that health explanations are plain English and consistent with the reported status codes.
+  - Evaluate: Each endpoint produces a documented HTTP status code.
+  - Evaluate: Health explanations are plain English and consistent with the reported status codes.
 ```
 
 A requirement has a stable `R-UPPERCASE-ID` and four recognized sections:
@@ -96,7 +96,7 @@ Evidence may be supplied through tests, measurements, Markdown reports, screensh
 Optional bracket annotations are opaque, experimental hints:
 
 ```md
-- Evaluate: Evidence demonstrates that the response conforms to the published schema.
+- Evaluate: The response conforms to the published schema.
 - Evaluate [evidence=workspace snapshot, response]: Evidence allows each material factual claim to be compared with the workspace state available when the response was produced.
 - Evaluate [evidence=latency measurements]: Evidence covering a representative measurement period demonstrates that p95 latency remains below 500 ms.
 ```

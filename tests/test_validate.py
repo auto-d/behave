@@ -331,6 +331,123 @@ It should work.
         self.assertIn("missing.md", diagnostics[0].message)
 
 
+class ScoresheetTests(unittest.TestCase):
+    document = """# Example Contract
+
+Context needed to review the evidence.
+
+### R-SCORESHEET
+
+#### Intent
+
+The system remains reviewable.
+
+#### Rationale
+
+Reviewers need the governing context.
+
+#### References
+
+- `reference.md`
+
+#### Behavior
+
+- The system exposes its result.
+  - Evaluate [evidence=response]: The result uses the documented format.
+  - Evaluate:
+      The result contains enough detail
+      to support review.
+"""
+
+    def test_scoresheet_preserves_context_and_adds_evidence_slots(self) -> None:
+        output = behave.render_scoresheet(
+            Path("contract.md"),
+            self.document,
+        )
+
+        self.assertIn("# Example Contract", output)
+        self.assertIn("Context needed to review the evidence.", output)
+        self.assertIn("#### Rationale", output)
+        self.assertIn("- `reference.md`", output)
+        self.assertIn("Evaluate [evidence=response]", output)
+        self.assertEqual(2, output.count("_No evidence linked yet._"))
+        self.assertIn("Source specification: `contract.md`", output)
+        self.assertEqual(
+            [],
+            behave.validate_text(Path("scoresheet.md"), output),
+        )
+
+    def test_multiline_criterion_precedes_its_evidence_slot(self) -> None:
+        output = behave.render_scoresheet(
+            Path("contract.md"),
+            self.document,
+        )
+
+        detail = output.index("to support review.")
+        evidence = output.rindex("    - Evidence:")
+        self.assertLess(detail, evidence)
+
+    def test_scoresheet_cli_prints_markdown_for_valid_specification(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            contract = Path(directory) / "contract.md"
+            contract.write_text(self.document, encoding="utf-8")
+            output = io.StringIO()
+
+            with redirect_stdout(output):
+                status = behave.main(["--scoresheet", str(contract)])
+
+        self.assertEqual(0, status)
+        self.assertTrue(output.getvalue().endswith("\n"))
+        self.assertEqual(
+            2,
+            output.getvalue().count("_No evidence linked yet._"),
+        )
+
+    def test_scoresheet_cli_rejects_invalid_spec_without_output(self) -> None:
+        invalid = """### R-INVALID
+
+#### Intent
+
+Missing behavior.
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            contract = Path(directory) / "invalid.md"
+            contract.write_text(invalid, encoding="utf-8")
+            output = io.StringIO()
+            error = io.StringIO()
+
+            with redirect_stdout(output), redirect_stderr(error):
+                status = behave.main(["--scoresheet", str(contract)])
+
+        self.assertEqual(1, status)
+        self.assertEqual("", output.getvalue())
+        self.assertIn("R003", error.getvalue())
+
+    def test_scoresheet_cli_rejects_incompatible_arguments(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            contract = Path(directory) / "contract.md"
+            contract.write_text(self.document, encoding="utf-8")
+
+            argument_sets = [
+                ["--scoresheet", str(contract), str(contract)],
+                ["--scoresheet", directory],
+                ["--scoresheet", "--json", str(contract)],
+                ["--scoresheet", "--check-references", str(contract)],
+                [
+                    "--scoresheet",
+                    "--check-external-references",
+                    str(contract),
+                ],
+            ]
+
+            for arguments in argument_sets:
+                with self.subTest(arguments=arguments):
+                    with redirect_stderr(io.StringIO()):
+                        with self.assertRaises(SystemExit) as raised:
+                            behave.main(arguments)
+                    self.assertEqual(2, raised.exception.code)
+
+
 class RequirementExtractionTests(unittest.TestCase):
     document = """# Contract
 

@@ -87,9 +87,14 @@ The `Behavior` section expresses each behavior as a top-level bullet. Every beha
 
 ## Evaluations
 
-An evaluation is one evidence-prescriptive rubric criterion. The collection of `Evaluate` clauses beneath a behavior defines what the available evidence must demonstrate for that behavior to be judged satisfied.
+An `Evaluate` clause says what must be true for its behavior to count as
+satisfied. Together, the clauses beneath a behavior form its evaluation
+checklist.
 
-Evaluation criteria prescribe evidence, not evidence-production mechanics. They may define the facts, comparisons, thresholds, coverage, or observation period needed to make a judgment, but they do not prescribe how an implementation collects that evidence or the artifact format in which it is presented.
+Each clause should make clear what the evidence needs to show. It may name
+facts, comparisons, thresholds, coverage, or an observation period, but it
+should not dictate how the implementation collects evidence or which artifact
+format it uses.
 
 Evidence may be supplied through tests, measurements, Markdown reports, screenshots, telemetry exports, session captures, API responses, or other implementation-appropriate artifacts.
 
@@ -97,45 +102,107 @@ Optional bracket annotations are opaque, experimental hints:
 
 ```md
 - Evaluate: The response conforms to the published schema.
-- Evaluate [evidence=workspace snapshot, response]: Evidence allows each material factual claim to be compared with the workspace state available when the response was produced.
-- Evaluate [evidence=latency measurements]: Evidence covering a representative measurement period demonstrates that p95 latency remains below 500 ms.
+- Evaluate [evidence=workspace snapshot, response]: Each material factual claim is supported by the workspace state available when the response was produced.
+- Evaluate [evidence=latency measurements]: p95 latency remains below 500 ms over a representative measurement period.
 ```
 
-Annotations may help implementations discover likely evidence sources, but they are non-normative and may evolve. A criterion must remain understandable without them. The validator accepts annotation contents without interpreting or restricting them.
+Annotations may help implementations discover likely evidence sources, but they are non-normative and may evolve. A criterion must remain understandable without them. The tool accepts annotation contents without interpreting or restricting them.
 
-## What the validator checks
+## Using `behave.py`
 
-Ordinary validation is deterministic and offline:
+The examples below assume `behavior.md` contains the small `R-EXAMPLE`
+specification shown above.
+
+### Validate a specification
+
+Run the default validation mode:
 
 ```sh
-python3 behave.py behavior.md
-python3 behave.py --json behavior.md
+$ python3 behave.py behavior.md
+Behavior specification valid: 1 file(s) checked.
 ```
 
-It checks requirement IDs, required and duplicate sections, unknown sections, stray requirement content, behavior/evaluation nesting, and nonempty evaluation statements.
+Validation checks requirement IDs, required and duplicate sections, unknown
+sections, stray requirement content, behavior/evaluation nesting, and nonempty
+evaluation statements.
 
-List requirements, then retrieve one without reading the full specification:
+Use `--json` when another tool will consume the diagnostics:
 
 ```sh
-python3 behave.py --list-requirements behavior.md
-python3 behave.py --show-requirement R-RUNTIME-CONFORMANCE behavior.md
-python3 behave.py --json --list-requirements behavior.md
-python3 behave.py --json --show-requirement R-RUNTIME-CONFORMANCE behavior.md
+$ python3 behave.py --json behavior.md
+[]
+```
+
+An empty JSON array means no validation errors were found.
+
+### Inspect requirements
+
+List requirement IDs without reading the whole specification:
+
+```sh
+$ python3 behave.py --list-requirements behavior.md
+R-EXAMPLE
+```
+
+Retrieve one requirement by its exact ID:
+
+```sh
+$ python3 behave.py --show-requirement R-EXAMPLE behavior.md
+### R-EXAMPLE
+
+#### Intent
+
+The system exposes health and status.
+
+#### Behavior
+
+- The system reports its state through one or more HTTP endpoints with explanatory text.
+
+  - Evaluate: Each endpoint produces a documented HTTP status code.
+  - Evaluate: Health explanations are plain English and consistent with the reported status codes.
 ```
 
 Queries require one specification file and preserve document order. Extraction
-matches the ID exactly and fails when the requirement is absent or duplicated.
+fails when the requirement is absent or duplicated. Add `--json` to either
+query for structured output.
 
-Reference checks are opt-in:
+### Check references
+
+Local and HTTP reference checks are opt-in:
 
 ```sh
-python3 behave.py --check-references behavior.md
-python3 behave.py --check-external-references --timeout 5 behavior.md
+$ python3 behave.py --check-references behavior.md
+Behavior specification valid: 1 file(s) checked.
 ```
 
-`--check-references` verifies local paths relative to the specification and fetches HTTP(S) references. `--check-external-references` checks only HTTP(S) references and may require network access.
+`--check-references` verifies local paths relative to the specification and
+fetches HTTP(S) references. To check only HTTP(S) references, use
+`--check-external-references`; add `--timeout 5` to set a five-second timeout
+per request. External checks require network access.
 
-The validator does not execute evaluations, bind them to tests, inspect evidence,
+### Generate a scoresheet
+
+Generate a Markdown scoresheet from one valid specification:
+
+```sh
+$ python3 behave.py --scoresheet behavior.md > scoresheet.md
+```
+
+The generated file preserves the complete specification and adds an evidence
+area beneath every criterion:
+
+```md
+  - Evaluate: Each endpoint produces a documented HTTP status code.
+    - Evidence:
+      - _No evidence linked yet._
+```
+
+Replace each placeholder with links to implementation-appropriate artifacts
+such as test results, measurements, reports, screenshots, or session captures.
+Scoresheets are deterministic and written to standard output. They do not
+assign scores or statuses, interpret evidence, or prescribe artifact formats.
+
+The tool does not execute evaluations, bind them to tests, inspect evidence,
 interpret annotation hints, or determine whether an implementation actually
 conforms.
 

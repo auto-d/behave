@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Validate a Markdown behavior specification.
+Work with Behave Markdown specifications.
 
 Current protocol rules enforced:
 
@@ -18,6 +18,9 @@ Current protocol rules enforced:
 
 Annotation hints are accepted without interpretation. This intentionally does
 not validate evidence, rubrics, tests, scenarios, or implementation conformance.
+
+The tool can also derive a Markdown scoresheet that preserves a specification
+and adds an evidence-links area beneath each evaluation criterion.
 """
 
 from __future__ import annotations
@@ -508,6 +511,121 @@ def requirement_summaries(
     return summaries
 
 
+def evaluation_locations(
+    text: str,
+) -> list[tuple[int, int, str, str]]:
+    """
+    Return evaluation locations as line indexes, indentation widths, raw
+    indentation, and list markers.
+
+    Callers should validate the specification before using these locations.
+    """
+    locations: list[tuple[int, int, str, str]] = []
+    current_section: str | None = None
+
+    for index, raw in enumerate(text.splitlines()):
+        if REQUIREMENT_RE.match(raw):
+            current_section = None
+            continue
+
+        section_match = SECTION_RE.match(raw)
+        if section_match:
+            current_section = section_match.group(1)
+            continue
+
+        if LEVEL_FOUR_RE.match(raw):
+            current_section = None
+            continue
+
+        if current_section != "Behavior":
+            continue
+
+        item = LIST_ITEM_RE.match(raw)
+        if not item or not EVALUATE_RE.match(item.group("text").strip()):
+            continue
+
+        raw_indent = item.group("indent")
+        marker = raw[len(raw_indent)]
+        locations.append(
+            (
+                index,
+                indentation_width(raw_indent),
+                raw_indent,
+                marker,
+            )
+        )
+
+    return locations
+
+
+def evaluation_body_end(
+    lines: Sequence[str],
+    start_index: int,
+    evaluate_indent: int,
+) -> int:
+    """Return the final non-blank line belonging to an evaluation criterion."""
+    end_index = start_index
+
+    for index in range(start_index + 1, len(lines)):
+        raw = lines[index]
+        if not raw.strip():
+            continue
+
+        if REQUIREMENT_RE.match(raw) or LEVEL_FOUR_RE.match(raw):
+            break
+
+        item = LIST_ITEM_RE.match(raw)
+        if item:
+            indent = indentation_width(item.group("indent"))
+            if indent <= evaluate_indent:
+                break
+            end_index = index
+            continue
+
+        leading = raw[: len(raw) - len(raw.lstrip(" \t"))]
+        if indentation_width(leading) <= evaluate_indent:
+            break
+
+        end_index = index
+
+    return end_index
+
+
+def render_scoresheet(path: Path, text: str) -> str:
+    """Return a Markdown scoresheet for a validated specification."""
+    lines = text.splitlines()
+    insertions: dict[int, list[tuple[str, str]]] = {}
+
+    for start, indent, raw_indent, marker in evaluation_locations(text):
+        end = evaluation_body_end(lines, start, indent)
+        insertions.setdefault(end, []).append((raw_indent, marker))
+
+    escaped_path = str(path).replace("`", "\\`")
+    output = [
+        (
+            "> **Behave scoresheet.** Replace each placeholder with links "
+            "to native evidence artifacts."
+        ),
+        f"> Source specification: `{escaped_path}`",
+        "",
+    ]
+
+    for index, raw in enumerate(lines):
+        output.append(raw)
+        for raw_indent, marker in insertions.get(index, []):
+            output.extend(
+                [
+                    f"{raw_indent}  {marker} Evidence:",
+                    (
+                        f"{raw_indent}    {marker} "
+                        "_No evidence linked yet._"
+                    ),
+                ]
+            )
+
+    return "\n".join(output).rstrip() + "\n"
+
+
 def reference_lines(text: str) -> list[tuple[int, str]]:
     """Return list-item contents declared in References sections."""
     lines: list[tuple[int, str]] = []
@@ -655,13 +773,13 @@ def iter_markdown_files(inputs: Iterable[Path]) -> list[Path]:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Validate behavior specification Markdown files."
+        description="Validate Behave specifications and derive related artifacts."
     )
     parser.add_argument(
         "paths",
         nargs="+",
         type=Path,
-        help="Markdown files or directories to validate",
+        help="Markdown specifications, or directories when validating",
     )
     parser.add_argument(
         "--json",
@@ -695,25 +813,70 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="list requirement identifiers from exactly one specification file",
     )
+    query_group.add_argument(
+        "--scoresheet",
+        action="store_true",
+        help="print an evidence-link scoresheet for one valid specification",
+    )
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    if args.scoresheet:
+        if len(args.paths) != 1 or args.paths[0].is_dir():
+            parser.error(
+                "scoresheet generation requires exactly one Markdown file"
+            )
+        if args.json:
+            parser.error("--scoresheet cannot be combined with --json")
+        if args.check_references or args.check_external_references:
+            parser.error(
+                "--scoresheet cannot be combined with reference checks"
+            )
+
+        path = args.paths[0]
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            diagnostic = Diagnostic(
+                str(path),
+                1,
+                "IO001",
+                f"could not read file: {exc}",
+            )
+            print(diagnostic.render(), file=sys.stderr)
+            return 1
+
+        diagnostics = validate_text(path, text)
+        if diagnostics:
+            for item in diagnostics:
+                print(item.render(), file=sys.stderr)
+            print(
+                f"\nValidation failed: {len(diagnostics)} issue(s) "
+                "across 1 file(s).",
+                file=sys.stderr,
+            )
+            return 1
+
+        sys.stdout.write(render_scoresheet(path, text))
+        return 0
 
     if args.show_requirement or args.list_requirements:
         if args.show_requirement and not REQUIREMENT_ID_RE.fullmatch(
             args.show_requirement
         ):
-            build_parser().error(
+            parser.error(
                 "--show-requirement expects an identifier such as R-EXAMPLE"
             )
         if len(args.paths) != 1 or args.paths[0].is_dir():
-            build_parser().error(
+            parser.error(
                 "requirement queries require exactly one Markdown file"
             )
         if args.check_references or args.check_external_references:
-            build_parser().error(
+            parser.error(
                 "requirement queries cannot be combined with reference checks"
             )
 

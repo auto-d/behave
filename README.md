@@ -1,8 +1,8 @@
-# Behavior Specification Protocol
+# Behave
 
-A behavior specification is a repository-native Markdown contract describing a system's intended external behavior and how completion will be evaluated.
+This project introduces Behave, a repository-native Markdown contract and companion tool that capture a system's intended external behavior and evaluation criteria.
 
-It keeps governing intent available to humans, coding agents, implementations,and evaluators instead of allowing tests or conversation history to become lossy proxies for the original design.
+Behave keeps governing intent available to humans, coding agents, implementations,and evaluators instead of allowing tests or conversation history to become lossy proxies for the original design.
 
 > **Status:** Early draft. The structure is usable, but the protocol may evolve.
 
@@ -20,16 +20,16 @@ requirements
 
 Over time, tests and implementation details may become operational proxies for the original design, while important intent remains distributed across conversations, source code, documentation, and issue history.
 
-A behavior specification keeps that intent explicit and active throughout the system lifecycle. It serves as:
-the design contract between the operator and the implementation;
-the governing behavioral reference for coding agents;
-the basis for determining whether implementation is complete;
-the anchor for implementation-appropriate evaluation; and
-a traceable source of intent for downstream tests and evaluation results.
+A Behave specification keeps that intent explicit and active throughout the system lifecycle. It serves as:
+- the design contract between the operator and the implementation
+- the governing behavioral reference for coding agents
+- the basis for determining whether implementation is complete
+- the anchor for implementation-appropriate evaluation 
+- a traceable source of intent for downstream tests and evaluation results
 
 The protocol describes behavior, not implementation. It defines what the system must do and how satisfaction will be determined without prescribing the architecture, algorithms, tools, or programming languages used to achieve it.
 
-A conforming specification remains readable as ordinary repository-native Markdown while providing enough structure for tooling to enumerate behaviors, verify that each has an evaluation path, and associate implementation and evaluation artifacts with the intent they are meant to satisfy.
+A conforming Behave specification remains readable as ordinary repository-native Markdown while providing enough structure for tooling to enumerate behaviors, verify that each has an evaluation path, and associate implementation and evaluation artifacts with the intent they are meant to satisfy.
 
 ## Quick start
 
@@ -83,24 +83,15 @@ languages, or internal reasoning.
 
 A behavior is one coherent, externally observable expectation. Behaviors describe what the system must do without prescribing its implementation.
 
-The `Behavior` section expresses each behavior as a top-level bullet. Every
-behavior must have at least one immediate child `Evaluate:` bullet defining a
-criterion for judging whether the behavior is satisfied.
+The `Behavior` section expresses each behavior as a top-level bullet. Every behavior must have at least one immediate child `Evaluate:` bullet defining a criterion for judging whether the behavior is satisfied.
 
 ## Evaluations
 
-An evaluation is one evidence-prescriptive rubric criterion. The collection of
-`Evaluate` clauses beneath a behavior defines what the available evidence must
-demonstrate for that behavior to be judged satisfied.
+An evaluation is one evidence-prescriptive rubric criterion. The collection of `Evaluate` clauses beneath a behavior defines what the available evidence must demonstrate for that behavior to be judged satisfied.
 
-Evaluation criteria prescribe evidence, not evidence-production mechanics. They
-may define the facts, comparisons, thresholds, coverage, or observation period
-needed to make a judgment, but they do not prescribe how an implementation
-collects that evidence or the artifact format in which it is presented.
+Evaluation criteria prescribe evidence, not evidence-production mechanics. They may define the facts, comparisons, thresholds, coverage, or observation period needed to make a judgment, but they do not prescribe how an implementation collects that evidence or the artifact format in which it is presented.
 
-Evidence may be supplied through tests, measurements, Markdown reports,
-screenshots, telemetry exports, session captures, API responses, or other
-implementation-appropriate artifacts.
+Evidence may be supplied through tests, measurements, Markdown reports, screenshots, telemetry exports, session captures, API responses, or other implementation-appropriate artifacts.
 
 Optional bracket annotations are opaque, experimental hints:
 
@@ -110,10 +101,7 @@ Optional bracket annotations are opaque, experimental hints:
 - Evaluate [evidence=latency measurements]: Evidence covering a representative measurement period demonstrates that p95 latency remains below 500 ms.
 ```
 
-Annotations may help implementations discover likely evidence sources, but they
-are non-normative and may evolve. A criterion must remain understandable without
-them. The validator accepts annotation contents without interpreting or
-restricting them.
+Annotations may help implementations discover likely evidence sources, but they are non-normative and may evolve. A criterion must remain understandable without them. The validator accepts annotation contents without interpreting or restricting them.
 
 ## What the validator checks
 
@@ -124,9 +112,7 @@ python3 behave.py behavior.md
 python3 behave.py --json behavior.md
 ```
 
-It checks requirement IDs, required and duplicate sections, unknown sections,
-stray requirement content, behavior/evaluation nesting, and nonempty evaluation
-statements.
+It checks requirement IDs, required and duplicate sections, unknown sections, stray requirement content, behavior/evaluation nesting, and nonempty evaluation statements.
 
 List requirements, then retrieve one without reading the full specification:
 
@@ -174,7 +160,7 @@ Repositories adopting the protocol can add the following to `AGENTS.md`, `CLAUDE
 ```md
 ## Behavioral specification workflow
 
-This project follows the Behavior Specification Protocol:
+This project follows the Behave protocol:
 
     https://raw.githubusercontent.com/auto-d/behave/main/README.md
 
@@ -186,7 +172,7 @@ This repository vendors that tool at:
 
     <path-to-behave>
 
-The authoritative behavioral specification for this project is:
+The authoritative Behave behavioral specification for this project is:
 
     <path-to-project-specification>
 

@@ -24,7 +24,7 @@ A behavior specification keeps that intent explicit and active throughout the sy
 the design contract between the operator and the implementation;
 the governing behavioral reference for coding agents;
 the basis for determining whether implementation is complete;
-the anchor for deterministic, semantic, hybrid, and manual evaluation; and
+the anchor for implementation-appropriate evaluation; and
 a traceable source of intent for downstream tests and evaluation results.
 
 The protocol describes behavior, not implementation. It defines what the system must do and how satisfaction will be determined without prescribing the architecture, algorithms, tools, or programming languages used to achieve it.
@@ -36,18 +36,18 @@ A conforming specification remains readable as ordinary repository-native Markdo
 Clone the repository and validate the included worked example:
 
 ```sh
-python3 validate.py example.md
+python3 behave.py example.md
 python3 -m unittest
 ```
 
-To adopt the protocol, copy `validate.py` into your repository, create a
+To adopt the protocol, copy `behave.py` into your repository, create a
 behavior specification, and run:
 
 ```sh
-python3 validate.py path/to/behavior.md
+python3 behave.py path/to/behavior.md
 ```
 
-The validator uses only the Python standard library.
+The command-line tool uses only the Python standard library.
 
 See [example.md](example.md) for a worked contract covering multiple
 requirements, behaviors, and evaluation methods.
@@ -65,8 +65,8 @@ The system exposes health and status.
 
 - The system reports its state through one or more HTTP endpoints with explanatory text.
 
-  - Evaluate [deterministic]: Verify that endpoint(s) produce common HTTP status codes.
-  - Evaluate [semantic, judge:llm]: Health explanations must be plain English and consistent with reported status codes. 
+  - Evaluate: Evidence demonstrates that each endpoint produces a documented HTTP status code.
+  - Evaluate: Evidence demonstrates that health explanations are plain English and consistent with the reported status codes.
 ```
 
 A requirement has a stable `R-UPPERCASE-ID` and four recognized sections:
@@ -83,50 +83,58 @@ languages, or internal reasoning.
 
 A behavior is one coherent, externally observable expectation. Behaviors describe what the system must do without prescribing its implementation.
 
-The `Behavior` section expresses each behavior as a top-level bullet. Every behavior must have at least one immediate child `Evaluate:` bullet defining how
-its satisfaction can be assessed.
+The `Behavior` section expresses each behavior as a top-level bullet. Every
+behavior must have at least one immediate child `Evaluate:` bullet defining a
+criterion for judging whether the behavior is satisfied.
 
 ## Evaluations
 
-An evaluation defines one way to determine whether its parent behavior is satisfied. Evidence may come from tests, telemetry, session captures, tool
-traces, artifacts, API responses, external observation, or human assessment.
+An evaluation is one evidence-prescriptive rubric criterion. The collection of
+`Evaluate` clauses beneath a behavior defines what the available evidence must
+demonstrate for that behavior to be judged satisfied.
 
-The first annotation identifies the assessment type:
+Evaluation criteria prescribe evidence, not evidence-production mechanics. They
+may define the facts, comparisons, thresholds, coverage, or observation period
+needed to make a judgment, but they do not prescribe how an implementation
+collects that evidence or the artifact format in which it is presented.
 
-- `deterministic`
-- `semantic`
-- `hybrid`
-- `manual`
-- `observational`
+Evidence may be supplied through tests, measurements, Markdown reports,
+screenshots, telemetry exports, session captures, API responses, or other
+implementation-appropriate artifacts.
 
-Additional annotations are free-form evaluator bindings:
+Optional bracket annotations are opaque, experimental hints:
 
 ```md
-- Evaluate [deterministic, runner=pytest]: Verify the response schema.
-- Evaluate [semantic, judge=llm, source=session]: Assess source grounding.
-- Evaluate [manual, judge=human]: Review the operational usefulness.
+- Evaluate: Evidence demonstrates that the response conforms to the published schema.
+- Evaluate [evidence=workspace snapshot, response]: Evidence allows each material factual claim to be compared with the workspace state available when the response was produced.
+- Evaluate [evidence=latency measurements]: Evidence covering a representative measurement period demonstrates that p95 latency remains below 500 ms.
 ```
 
-Bindings such as `runner`, `judge`, and `source` describe downstream evaluator design. The validator recognizes them as annotations but does not execute or verify the referenced evaluator.
+Annotations may help implementations discover likely evidence sources, but they
+are non-normative and may evolve. A criterion must remain understandable without
+them. The validator accepts annotation contents without interpreting or
+restricting them.
 
 ## What the validator checks
 
 Ordinary validation is deterministic and offline:
 
 ```sh
-python3 validate.py behavior.md
-python3 validate.py --json behavior.md
+python3 behave.py behavior.md
+python3 behave.py --json behavior.md
 ```
 
-It checks requirement IDs, required and duplicate sections, unknown sections, stray requirement content, behavior/evaluation nesting, nonempty evaluation statements, and recognized assessment types.
+It checks requirement IDs, required and duplicate sections, unknown sections,
+stray requirement content, behavior/evaluation nesting, and nonempty evaluation
+statements.
 
 List requirements, then retrieve one without reading the full specification:
 
 ```sh
-python3 validate.py --list-requirements behavior.md
-python3 validate.py --show-requirement R-RUNTIME-CONFORMANCE behavior.md
-python3 validate.py --json --list-requirements behavior.md
-python3 validate.py --json --show-requirement R-RUNTIME-CONFORMANCE behavior.md
+python3 behave.py --list-requirements behavior.md
+python3 behave.py --show-requirement R-RUNTIME-CONFORMANCE behavior.md
+python3 behave.py --json --list-requirements behavior.md
+python3 behave.py --json --show-requirement R-RUNTIME-CONFORMANCE behavior.md
 ```
 
 Queries require one specification file and preserve document order. Extraction
@@ -135,13 +143,15 @@ matches the ID exactly and fails when the requirement is absent or duplicated.
 Reference checks are opt-in:
 
 ```sh
-python3 validate.py --check-references behavior.md
-python3 validate.py --check-external-references --timeout 5 behavior.md
+python3 behave.py --check-references behavior.md
+python3 behave.py --check-external-references --timeout 5 behavior.md
 ```
 
 `--check-references` verifies local paths relative to the specification and fetches HTTP(S) references. `--check-external-references` checks only HTTP(S) references and may require network access.
 
-The validator does not execute evaluations, bind them to tests, inspect evidence, or determine whether an implementation actually conforms.
+The validator does not execute evaluations, bind them to tests, inspect evidence,
+interpret annotation hints, or determine whether an implementation actually
+conforms.
 
 ## Maintenance
 
@@ -168,13 +178,13 @@ This project follows the Behavior Specification Protocol:
 
     https://raw.githubusercontent.com/auto-d/behave/main/README.md
 
-The reference validator is available at:
+The reference command-line tool is available at:
 
-    https://raw.githubusercontent.com/auto-d/behave/main/validate.py
+    https://raw.githubusercontent.com/auto-d/behave/main/behave.py
 
-This repository vendors that validator at:
+This repository vendors that tool at:
 
-    <path-to-validator>
+    <path-to-behave>
 
 The authoritative behavioral specification for this project is:
 
@@ -182,12 +192,12 @@ The authoritative behavioral specification for this project is:
 
 Validate it with:
 
-    python3 <path-to-validator> <path-to-project-specification>
+    python3 <path-to-behave> <path-to-project-specification>
 
 List and inspect requirements with:
 
-    python3 <path-to-validator> --list-requirements <path-to-project-specification>
-    python3 <path-to-validator> --show-requirement R-ID <path-to-project-specification>
+    python3 <path-to-behave> --list-requirements <path-to-project-specification>
+    python3 <path-to-behave> --show-requirement R-ID <path-to-project-specification>
 
 Treat the specification as the authoritative description of intended external behavior. When user intent introduces, changes, or contradicts behavior, update the specification before considering the related implementation complete.
 
@@ -198,4 +208,4 @@ Do not leave material intent only in conversation, code, tests, issues, or imple
 
 ## Project status
 
-This repository is an early protocol and reference validator. Contributions and examples are welcome. A public-use license has not yet been selected.
+This repository is an early protocol and reference tool. Contributions and examples are welcome. A public-use license has not yet been selected.

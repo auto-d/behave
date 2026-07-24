@@ -14,11 +14,10 @@ Current protocol rules enforced:
 7. A `#### Behavior` section contains at least one behavior bullet.
 8. Every behavior bullet contains at least one immediate child `Evaluate` clause.
 9. Every `Evaluate` clause contains a non-empty evaluation statement.
-10. When an assessment type is supplied, it is recognized.
-11. Optionally, targets in `References` sections are fetchable or exist locally.
+10. Optionally, targets in `References` sections are fetchable or exist locally.
 
-This intentionally does not validate evaluator bindings, tests, scenarios,
-evidence schemas, rubrics, or implementation conformance.
+Annotation hints are accepted without interpretation. This intentionally does
+not validate evidence, rubrics, tests, scenarios, or implementation conformance.
 """
 
 from __future__ import annotations
@@ -54,15 +53,6 @@ EVALUATE_RE = re.compile(
 EXTERNAL_REFERENCE_RE = re.compile(r"""https?://[^\s<>()\[\]`"']+""")
 MARKDOWN_LINK_RE = re.compile(r"\[[^\]]*\]\((?P<target>[^)]+)\)")
 BACKTICK_REFERENCE_RE = re.compile(r"`(?P<target>[^`]+)`")
-
-ALLOWED_ASSESSMENT_TYPES = {
-    "deterministic",
-    "semantic",
-    "hybrid",
-    "manual",
-    "observational",
-}
-
 
 @dataclass(frozen=True)
 class Diagnostic:
@@ -129,13 +119,6 @@ class RequirementSummary:
 def indentation_width(value: str) -> int:
     """Treat a tab as four spaces for structural comparison."""
     return sum(4 if char == "\t" else 1 for char in value)
-
-
-def first_annotation_token(raw: str) -> str | None:
-    if not raw.strip():
-        return None
-    first = raw.split(",", 1)[0].strip()
-    return first if "=" not in first else None
 
 
 def has_indented_body(
@@ -430,19 +413,6 @@ def validate_text(path: Path, text: str) -> list[Diagnostic]:
                 ListContext(indent, "evaluate", line_number)
             )
 
-            annotations = evaluate_match.group("annotations") or ""
-            assessment_type = first_annotation_token(annotations)
-            if assessment_type and assessment_type.lower() not in ALLOWED_ASSESSMENT_TYPES:
-                allowed = ", ".join(sorted(ALLOWED_ASSESSMENT_TYPES))
-                diagnostics.append(
-                    Diagnostic(
-                        str(path),
-                        line_number,
-                        "E003",
-                        f"unknown assessment type `{assessment_type}`; expected one of: {allowed}",
-                    )
-                )
-
             inline_body = evaluate_match.group("body").strip()
             if not inline_body and not has_indented_body(lines, index, indent):
                 diagnostics.append(
@@ -642,7 +612,7 @@ def validate_external_references(
             request = Request(
                 reference.url,
                 headers={
-                    "User-Agent": "behavior-specification-validator/1",
+                    "User-Agent": "behavior-specification-tool/1",
                     "Range": "bytes=0-0",
                 },
             )

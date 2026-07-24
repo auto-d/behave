@@ -7,7 +7,7 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
-import validate
+import behave
 
 
 def specification(body: str) -> str:
@@ -24,7 +24,7 @@ Introductory prose is allowed.
 def codes(text: str) -> list[str]:
     return [
         diagnostic.code
-        for diagnostic in validate.validate_text(Path("contract.md"), text)
+        for diagnostic in behave.validate_text(Path("contract.md"), text)
     ]
 
 
@@ -39,7 +39,7 @@ Describe the intended outcome.
 
 - The system behaves observably.
 
-  - Evaluate [manual]: Inspect the result."""
+  - Evaluate: Inspect the result."""
         )
 
         self.assertEqual([], codes(text))
@@ -56,13 +56,13 @@ Explain why it matters.
 
 #### References
 
-- `validate.py`
+- `behave.py`
 
 #### Behavior
 
 - The system behaves observably.
 
-  - Evaluate [deterministic]: Verify the result."""
+  - Evaluate: Verify the result."""
         )
 
         self.assertEqual([], codes(text))
@@ -72,7 +72,7 @@ Explain why it matters.
             """#### Behavior
 
 - It works.
-  - Evaluate [manual]: Inspect."""
+  - Evaluate: Inspect."""
         )
         no_behavior = specification(
             """#### Intent
@@ -95,7 +95,7 @@ Second.
 
 #### References
 
-- `validate.py`
+- `behave.py`
 
 #### References
 
@@ -104,7 +104,7 @@ Second.
 #### Behavior
 
 - It works.
-  - Evaluate [manual]: Inspect."""
+  - Evaluate: Inspect."""
         )
 
         self.assertEqual(2, codes(text).count("S002"))
@@ -122,7 +122,7 @@ This extension is not recognized.
 #### Behavior
 
 - It works.
-  - Evaluate [manual]: Inspect."""
+  - Evaluate: Inspect."""
         )
 
         self.assertEqual(["S003"], codes(text))
@@ -138,7 +138,7 @@ It should work.
 #### Behavior
 
 - It works.
-  - Evaluate [manual]: Inspect."""
+  - Evaluate: Inspect."""
         )
 
         self.assertEqual(["P001"], codes(text))
@@ -152,7 +152,7 @@ It should work.
 #### Behavior
 
 - It works.
-  - Evaluate [manual]: Inspect."""
+  - Evaluate: Inspect."""
         )
 
         self.assertIn("S001", codes(text))
@@ -178,7 +178,7 @@ It should work.
 #### Behavior
 
 - It works.
-  - Evaluate [manual]: Inspect.
+  - Evaluate: Inspect.
 """
         text = requirement + "\n" + requirement
 
@@ -195,10 +195,10 @@ It should work.
 #### Behavior
 
 - First behavior.
-  - Evaluate [manual]: Inspect.
+  - Evaluate: Inspect.
 
 - Second behavior.
-  - Evaluate [manual]: Inspect."""
+  - Evaluate: Inspect."""
         )
 
         self.assertEqual([], codes(text))
@@ -211,7 +211,7 @@ It should work.
 
 #### Behavior
 
-- Evaluate [manual]: Inspect."""
+- Evaluate: Inspect."""
         )
 
         self.assertIn("E001", codes(text))
@@ -226,7 +226,7 @@ It should work.
 
 - A behavior.
   - Supporting detail.
-    - Evaluate [manual]: Inspect."""
+    - Evaluate: Inspect."""
         )
 
         result = codes(text)
@@ -242,13 +242,13 @@ It should work.
 #### Behavior
 
 - A behavior.
-  - Evaluate [manual]: Inspect once.
-  - Evaluate [semantic]: Inspect again."""
+  - Evaluate: Inspect once.
+  - Evaluate: Inspect again."""
         )
 
         self.assertEqual([], codes(text))
 
-    def test_empty_evaluation_and_unknown_type_are_rejected(self) -> None:
+    def test_empty_evaluation_is_rejected(self) -> None:
         text = specification(
             """#### Intent
 
@@ -260,9 +260,21 @@ It should work.
   - Evaluate [invented]:"""
         )
 
-        result = codes(text)
-        self.assertIn("E002", result)
-        self.assertIn("E003", result)
+        self.assertEqual(["E002"], codes(text))
+
+    def test_annotation_hints_are_accepted_without_interpretation(self) -> None:
+        text = specification(
+            """#### Intent
+
+It should work.
+
+#### Behavior
+
+- The system grounds its conclusions.
+  - Evaluate [evidence=calendar, tasks]: Evidence demonstrates that each conclusion is supported by the available records."""
+        )
+
+        self.assertEqual([], codes(text))
 
 
 class ReferenceValidationTests(unittest.TestCase):
@@ -274,7 +286,7 @@ It should work.
 
 #### References
 
-- `validate.py`
+- `behave.py`
 
 #### Notes
 
@@ -283,12 +295,12 @@ It should work.
 #### Behavior
 
 - It works.
-  - Evaluate [manual]: Inspect."""
+  - Evaluate: Inspect."""
         )
 
         self.assertEqual(
-            ["validate.py"],
-            [reference.target for reference in validate.local_references(text)],
+            ["behave.py"],
+            [reference.target for reference in behave.local_references(text)],
         )
 
     def test_local_reference_existence(self) -> None:
@@ -310,10 +322,10 @@ It should work.
 #### Behavior
 
 - It works.
-  - Evaluate [manual]: Inspect."""
+  - Evaluate: Inspect."""
             )
 
-            diagnostics = validate.validate_local_references(contract, text)
+            diagnostics = behave.validate_local_references(contract, text)
 
         self.assertEqual(["REF002"], [item.code for item in diagnostics])
         self.assertIn("missing.md", diagnostics[0].message)
@@ -331,7 +343,7 @@ First intent.
 #### Behavior
 
 - First behavior.
-  - Evaluate [manual]: Inspect.
+  - Evaluate: Inspect.
 
 ### R-SECOND
 
@@ -342,11 +354,11 @@ Second intent.
 #### Behavior
 
 - Second behavior.
-  - Evaluate [manual]: Inspect.
+  - Evaluate: Inspect.
 """
 
     def test_extracts_exact_requirement_boundaries(self) -> None:
-        excerpts = validate.requirement_excerpts(
+        excerpts = behave.requirement_excerpts(
             Path("contract.md"),
             self.document,
             "R-FIRST",
@@ -358,7 +370,7 @@ Second intent.
         self.assertNotIn("R-SECOND", excerpts[0].markdown)
 
     def test_extracts_last_requirement_through_end_of_file(self) -> None:
-        excerpt = validate.requirement_excerpts(
+        excerpt = behave.requirement_excerpts(
             Path("contract.md"),
             self.document,
             "R-SECOND",
@@ -370,7 +382,7 @@ Second intent.
     def test_missing_requirement_returns_no_excerpt(self) -> None:
         self.assertEqual(
             [],
-            validate.requirement_excerpts(
+            behave.requirement_excerpts(
                 Path("contract.md"),
                 self.document,
                 "R-MISSING",
@@ -383,7 +395,7 @@ Second intent.
         self.assertEqual(
             2,
             len(
-                validate.requirement_excerpts(
+                behave.requirement_excerpts(
                     Path("contract.md"),
                     duplicate,
                     "R-FIRST",
@@ -392,7 +404,7 @@ Second intent.
         )
 
     def test_lists_requirements_in_document_order(self) -> None:
-        summaries = validate.requirement_summaries(
+        summaries = behave.requirement_summaries(
             Path("contract.md"),
             self.document,
         )
@@ -410,13 +422,13 @@ Second intent.
 
             plain_output = io.StringIO()
             with redirect_stdout(plain_output):
-                plain_status = validate.main(
+                plain_status = behave.main(
                     ["--list-requirements", str(contract)]
                 )
 
             json_output = io.StringIO()
             with redirect_stdout(json_output):
-                json_status = validate.main(
+                json_status = behave.main(
                     ["--json", "--list-requirements", str(contract)]
                 )
 
@@ -442,7 +454,7 @@ Second intent.
 
             output = io.StringIO()
             with redirect_stdout(output):
-                status = validate.main(
+                status = behave.main(
                     ["--list-requirements", str(contract)]
                 )
 
@@ -456,13 +468,13 @@ Second intent.
 
             plain_output = io.StringIO()
             with redirect_stdout(plain_output):
-                plain_status = validate.main(
+                plain_status = behave.main(
                     ["--show-requirement", "R-FIRST", str(contract)]
                 )
 
             json_output = io.StringIO()
             with redirect_stdout(json_output):
-                json_status = validate.main(
+                json_status = behave.main(
                     [
                         "--json",
                         "--show-requirement",
@@ -486,7 +498,7 @@ Second intent.
 
             missing_error = io.StringIO()
             with redirect_stderr(missing_error):
-                missing_status = validate.main(
+                missing_status = behave.main(
                     ["--show-requirement", "R-MISSING", str(contract)]
                 )
 
@@ -496,7 +508,7 @@ Second intent.
             )
             duplicate_error = io.StringIO()
             with redirect_stderr(duplicate_error):
-                duplicate_status = validate.main(
+                duplicate_status = behave.main(
                     ["--show-requirement", "R-FIRST", str(contract)]
                 )
 

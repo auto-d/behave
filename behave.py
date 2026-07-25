@@ -58,6 +58,10 @@ RECOMMENDATION_RE = re.compile(
     r"include|require)\b|\b(?:should|ought to|needs to|recommend(?:s|ed)?)\b",
     re.IGNORECASE,
 )
+RUBRIC_SCORE_RE = re.compile(
+    r"^Score: (?P<score>(?:10(?:\.0)?|[0-9](?:\.[0-9])?))\n"
+    r"Note: (?P<note>\S(?:.*\S)?)$"
+)
 
 TOOL_DIRECTORY = Path(__file__).resolve().parent
 PROTOCOL_PATH = TOOL_DIRECTORY / "PROTOCOL.md"
@@ -75,6 +79,9 @@ CRITIQUE_REASONING_EFFORTS = (
 )
 CRITIQUE_TIMEOUT = 120.0
 CRITIQUE_MAX_OUTPUT_TOKENS = 8192
+RUBRIC_MODEL = CRITIQUE_MODEL
+RUBRIC_REASONING_EFFORT = "low"
+RUBRIC_MAX_OUTPUT_TOKENS = 512
 NO_FINDINGS_TEXT = "_No material evaluability issues identified._"
 UNUSABLE_RESPONSE_TEXT = (
     "_Critique unavailable because the model did not return a usable response._"
@@ -159,6 +166,27 @@ class CritiqueResult:
     text: str
     latency_seconds: float
     usage: CritiqueUsage
+
+
+@dataclass(frozen=True)
+class RubricScore:
+    score: float
+    note: str
+    latency_seconds: float
+    usage: CritiqueUsage
+
+
+@dataclass(frozen=True)
+class ReasoningEvaluation:
+    effort: str
+    findings: int
+    critique_latency_seconds: float | None
+    critique_usage: CritiqueUsage
+    score: float
+    note: str
+    score_latency_seconds: float | None
+    score_usage: CritiqueUsage
+    error: str | None = None
 
 
 class CritiqueError(Exception):
@@ -701,6 +729,29 @@ def critique_instructions(prompt: str, protocol: str) -> str:
     )
 
 
+def rubric_instructions(protocol: str) -> str:
+    return (
+        "Score one Behave evaluability critique for diagnostic value.\n\n"
+        "The Behave protocol, requirement, and critique are authoritative "
+        "inputs for scoring. The critique is diagnostic only; do not propose "
+        "revisions or replacement wording.\n\n"
+        "Rubric, 10 points total:\n"
+        "- Material coverage, 4 points: important evaluability gaps are found.\n"
+        "- Precision, 3 points: findings are tied to real behavior/evaluate "
+        "mismatches without weak false positives.\n"
+        "- Diagnostic usefulness, 2 points: findings identify the kind of gap "
+        "a maintainer must consider without prescribing fixes.\n"
+        "- Contract cleanliness, 1 point: the critique follows the output "
+        "contract and avoids extra prose or recommendation language.\n\n"
+        "Return exactly two lines:\n"
+        "Score: N.N\n"
+        "Note: One concise sentence explaining the score.\n\n"
+        "<behave_protocol>\n"
+        f"{protocol}"
+        "</behave_protocol>"
+    )
+
+
 def integer_value(value: object) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
@@ -734,6 +785,10 @@ def format_seconds(value: float) -> str:
 
 def format_count(value: int | None) -> str:
     return f"{value:,}" if value is not None else "unknown"
+
+
+def markdown_table_cell(value: str) -> str:
+    return value.replace("|", "\\|").replace("\n", " ")
 
 
 def usage_summary(usage: CritiqueUsage) -> str:
@@ -844,6 +899,102 @@ def request_critique(
     )
 
 
+def response_output_text(response_payload: dict[str, object]) -> str:
+    output_text: list[str] = []
+    output = response_payload.get("output")
+    if not isinstance(output, list):
+        raise CritiqueError("OpenAI API response contained no output")
+
+    for item in output:
+        if not isinstance(item, dict) or item.get("type") != "message":
+            continue
+        content = item.get("content")
+        if not isinstance(content, list):
+            continue
+        for part in content:
+            if (
+                isinstance(part, dict)
+                and part.get("type") == "output_text"
+                and isinstance(part.get("text"), str)
+            ):
+                output_text.append(part["text"])
+
+    combined = "".join(output_text)
+    if not combined.strip():
+        raise CritiqueError("OpenAI API response contained no output text")
+    return combined
+
+
+def request_rubric_score(
+    api_key: str,
+    instructions: str,
+    requirement: RequirementExcerpt,
+    critique_fragment: str,
+    timeout: float = CRITIQUE_TIMEOUT,
+) -> RubricScore:
+    """Score one accepted critique fragment using the rubric."""
+    input_payload = json.dumps(
+        {
+            "requirement_id": requirement.identifier,
+            "requirement_markdown": requirement.markdown,
+            "critique_markdown": critique_fragment,
+        },
+        ensure_ascii=False,
+    )
+    request_payload = {
+        "model": RUBRIC_MODEL,
+        "instructions": instructions,
+        "input": input_payload,
+        "reasoning": {"effort": RUBRIC_REASONING_EFFORT},
+        "text": {"verbosity": "low"},
+        "store": False,
+        "max_output_tokens": RUBRIC_MAX_OUTPUT_TOKENS,
+    }
+    request = Request(
+        OPENAI_RESPONSES_URL,
+        data=json.dumps(request_payload, ensure_ascii=False).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "User-Agent": "behave-rubric/1",
+        },
+        method="POST",
+    )
+
+    try:
+        started = time.monotonic()
+        with urlopen(request, timeout=timeout) as response:
+            response_payload = json.loads(response.read().decode("utf-8"))
+        latency_seconds = time.monotonic() - started
+    except HTTPError as exc:
+        raise CritiqueError(f"OpenAI API returned HTTP {exc.code}") from exc
+    except URLError as exc:
+        raise CritiqueError(f"OpenAI API request failed: {exc.reason}") from exc
+    except TimeoutError as exc:
+        raise CritiqueError("OpenAI API request timed out") from exc
+    except OSError as exc:
+        raise CritiqueError(f"OpenAI API request failed: {exc}") from exc
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise CritiqueError("OpenAI API returned malformed JSON") from exc
+
+    if not isinstance(response_payload, dict):
+        raise CritiqueError("OpenAI API returned an unexpected response")
+    if response_payload.get("status") != "completed":
+        raise CritiqueError("OpenAI API response was not completed")
+
+    score_text = response_output_text(response_payload).strip()
+    match = RUBRIC_SCORE_RE.fullmatch(score_text)
+    if not match:
+        raise CritiqueError("rubric score response was malformed")
+
+    return RubricScore(
+        score=float(match.group("score")),
+        note=match.group("note"),
+        latency_seconds=latency_seconds,
+        usage=critique_usage(response_payload),
+    )
+
+
 def unavailable_critique_fragment(identifier: str, message: str) -> str:
     return f"## {identifier}\n\n{message}"
 
@@ -946,6 +1097,168 @@ def generate_critique_report(
     )
     report = header + "\n\n" + "\n\n".join(fragments) + "\n"
     return report, failures
+
+
+def count_findings(fragment: str) -> int:
+    return sum(
+        1
+        for line in fragment.splitlines()
+        if CRITIQUE_FINDING_RE.fullmatch(line)
+    )
+
+
+def generate_reasoning_evaluation_table(
+    path: Path,
+    text: str,
+    prompt: str,
+    protocol: str,
+    api_key: str,
+    requirement_id: str,
+    efforts: Sequence[str] = CRITIQUE_REASONING_EFFORTS,
+) -> tuple[str, list[str]]:
+    """Run one requirement at several reasoning efforts and score each result."""
+    requirement = requirement_excerpts(path, text, requirement_id)[0]
+    critique_prompt = critique_instructions(prompt, protocol)
+    score_prompt = rubric_instructions(protocol)
+    targets = critique_targets(requirement.markdown)
+    evaluations: list[ReasoningEvaluation] = []
+    failures: list[str] = []
+
+    for effort in efforts:
+        try:
+            result = request_critique(
+                api_key,
+                critique_prompt,
+                requirement,
+                effort,
+            )
+        except CritiqueError as exc:
+            message = str(exc)
+            failures.append(f"{effort}: critique unavailable: {message}")
+            evaluations.append(
+                ReasoningEvaluation(
+                    effort=effort,
+                    findings=0,
+                    critique_latency_seconds=None,
+                    critique_usage=CritiqueUsage(),
+                    score=0.0,
+                    note=f"Critique unavailable: {message}",
+                    score_latency_seconds=None,
+                    score_usage=CritiqueUsage(),
+                    error=message,
+                )
+            )
+            continue
+
+        try:
+            accepted_fragment = validate_critique_fragment(
+                requirement_id,
+                result.text,
+                targets,
+            )
+        except ValueError as exc:
+            message = f"model response was malformed: {exc}"
+            failures.append(f"{effort}: {message}")
+            evaluations.append(
+                ReasoningEvaluation(
+                    effort=effort,
+                    findings=0,
+                    critique_latency_seconds=result.latency_seconds,
+                    critique_usage=result.usage,
+                    score=0.0,
+                    note=message,
+                    score_latency_seconds=None,
+                    score_usage=CritiqueUsage(),
+                    error=message,
+                )
+            )
+            continue
+
+        try:
+            score = request_rubric_score(
+                api_key,
+                score_prompt,
+                requirement,
+                accepted_fragment,
+            )
+        except CritiqueError as exc:
+            message = f"rubric score unavailable: {exc}"
+            failures.append(f"{effort}: {message}")
+            evaluations.append(
+                ReasoningEvaluation(
+                    effort=effort,
+                    findings=count_findings(accepted_fragment),
+                    critique_latency_seconds=result.latency_seconds,
+                    critique_usage=result.usage,
+                    score=0.0,
+                    note=message,
+                    score_latency_seconds=None,
+                    score_usage=CritiqueUsage(),
+                    error=message,
+                )
+            )
+            continue
+
+        evaluations.append(
+            ReasoningEvaluation(
+                effort=effort,
+                findings=count_findings(accepted_fragment),
+                critique_latency_seconds=result.latency_seconds,
+                critique_usage=result.usage,
+                score=score.score,
+                note=score.note,
+                score_latency_seconds=score.latency_seconds,
+                score_usage=score.usage,
+            )
+        )
+
+    escaped_path = str(path).replace("`", "\\`")
+    lines = [
+        "# Behave critique reasoning evaluation",
+        "",
+        f"> Source specification: `{escaped_path}`",
+        f"> Requirement: `{requirement_id}`",
+        f"> Critique model: `{CRITIQUE_MODEL}`",
+        f"> Rubric model: `{RUBRIC_MODEL}`",
+        f"> Rubric reasoning effort: `{RUBRIC_REASONING_EFFORT}`",
+        "",
+        (
+            "Rubric: material coverage 4, precision 3, diagnostic usefulness "
+            "2, contract cleanliness 1."
+        ),
+        "",
+        (
+            "| Effort | Findings | Critique latency | Critique reasoning tokens | "
+            "Critique total tokens | Score | Score latency | Score total tokens | Note |"
+        ),
+        "|---|---:|---:|---:|---:|---:|---:|---:|---|",
+    ]
+    for evaluation in evaluations:
+        critique_latency = (
+            "n/a"
+            if evaluation.critique_latency_seconds is None
+            else format_seconds(evaluation.critique_latency_seconds)
+        )
+        score_latency = (
+            "n/a"
+            if evaluation.score_latency_seconds is None
+            else format_seconds(evaluation.score_latency_seconds)
+        )
+        lines.append(
+            "| "
+            f"`{evaluation.effort}` | "
+            f"{evaluation.findings} | "
+            f"{critique_latency} | "
+            f"{format_count(evaluation.critique_usage.reasoning_tokens)} | "
+            f"{format_count(evaluation.critique_usage.total_tokens)} | "
+            f"{evaluation.score:.1f} | "
+            f"{score_latency} | "
+            f"{format_count(evaluation.score_usage.total_tokens)} | "
+            f"{markdown_table_cell(evaluation.note)} |"
+        )
+
+    lines.append("")
+    return "\n".join(lines), failures
 
 
 def evaluation_locations(
@@ -1198,6 +1511,25 @@ def positive_float(value: str) -> float:
     return parsed
 
 
+def reasoning_effort_list(value: str) -> tuple[str, ...]:
+    efforts = tuple(item.strip() for item in value.split(",") if item.strip())
+    if not efforts:
+        raise argparse.ArgumentTypeError("must include at least one effort")
+
+    invalid = [
+        effort
+        for effort in efforts
+        if effort not in CRITIQUE_REASONING_EFFORTS
+    ]
+    if invalid:
+        allowed = ", ".join(CRITIQUE_REASONING_EFFORTS)
+        raise argparse.ArgumentTypeError(
+            f"unknown effort {invalid[0]!r}; expected one of: {allowed}"
+        )
+
+    return efforts
+
+
 def iter_markdown_files(inputs: Iterable[Path]) -> list[Path]:
     files: list[Path] = []
     for path in inputs:
@@ -1260,6 +1592,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="critique Evaluate clauses for one valid specification",
     )
+    query_group.add_argument(
+        "--critique-reasoning-eval",
+        metavar="R-ID",
+        help="compare critique value across reasoning efforts for one requirement",
+    )
     parser.add_argument(
         "--critique-requirement",
         metavar="R-ID",
@@ -1272,6 +1609,15 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "with --critique, set Responses API reasoning effort "
             f"(default: {CRITIQUE_REASONING_EFFORT})"
+        ),
+    )
+    parser.add_argument(
+        "--critique-reasoning-efforts",
+        type=reasoning_effort_list,
+        metavar="EFFORTS",
+        help=(
+            "with --critique-reasoning-eval, comma-separated reasoning "
+            "efforts to compare"
         ),
     )
     return parser
@@ -1290,6 +1636,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             parser.error("--critique cannot be combined with --json")
         if args.check_references or args.check_external_references:
             parser.error("--critique cannot be combined with reference checks")
+        if args.critique_reasoning_efforts is not None:
+            parser.error("--critique-reasoning-efforts requires --critique-reasoning-eval")
         if (
             args.critique_requirement
             and not REQUIREMENT_ID_RE.fullmatch(args.critique_requirement)
@@ -1301,6 +1649,114 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error("--critique-requirement requires --critique")
     elif args.critique_reasoning_effort is not None:
         parser.error("--critique-reasoning-effort requires --critique")
+    elif (
+        args.critique_reasoning_efforts is not None
+        and not args.critique_reasoning_eval
+    ):
+        parser.error("--critique-reasoning-efforts requires --critique-reasoning-eval")
+
+    if args.critique_reasoning_eval:
+        if len(args.paths) != 1 or args.paths[0].is_dir():
+            parser.error(
+                "critique reasoning evaluation requires exactly one Markdown file"
+            )
+        if args.json:
+            parser.error("--critique-reasoning-eval cannot be combined with --json")
+        if args.check_references or args.check_external_references:
+            parser.error(
+                "--critique-reasoning-eval cannot be combined with reference checks"
+            )
+        if not REQUIREMENT_ID_RE.fullmatch(args.critique_reasoning_eval):
+            parser.error(
+                "--critique-reasoning-eval expects an identifier such as R-EXAMPLE"
+            )
+
+        path = args.paths[0]
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            print(
+                f"{path}:1: IO001: could not read file: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+
+        diagnostics = validate_text(path, text)
+        if diagnostics:
+            for item in diagnostics:
+                print(item.render(), file=sys.stderr)
+            print(
+                f"\nValidation failed: {len(diagnostics)} issue(s) "
+                "across 1 file(s).",
+                file=sys.stderr,
+            )
+            return 1
+
+        matches = requirement_excerpts(
+            path,
+            text,
+            args.critique_reasoning_eval,
+        )
+        if len(matches) > 1:
+            print(
+                f"{path}:{matches[1].line}: R002: duplicate requirement "
+                f"identifier {args.critique_reasoning_eval}; critique target "
+                "is ambiguous",
+                file=sys.stderr,
+            )
+            return 1
+        if not matches:
+            print(
+                f"{path}:1: R005: requirement "
+                f"{args.critique_reasoning_eval} was not found",
+                file=sys.stderr,
+            )
+            return 1
+
+        try:
+            prompt = CRITIQUE_PROMPT_PATH.read_text(encoding="utf-8")
+            protocol = PROTOCOL_PATH.read_text(encoding="utf-8")
+        except OSError as exc:
+            print(
+                f"Critique configuration unavailable: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+
+        if not prompt.strip() or not protocol.strip():
+            print(
+                "Critique configuration unavailable: prompt and protocol "
+                "must not be empty.",
+                file=sys.stderr,
+            )
+            return 1
+
+        try:
+            api_key = load_openai_api_key()
+        except OSError as exc:
+            print(f"Could not read .env: {exc}", file=sys.stderr)
+            return 1
+
+        if api_key is None:
+            print(
+                "OPENAI_API_KEY is required in the environment or ./.env.",
+                file=sys.stderr,
+            )
+            return 1
+
+        table, failures = generate_reasoning_evaluation_table(
+            path,
+            text,
+            prompt,
+            protocol,
+            api_key,
+            args.critique_reasoning_eval,
+            args.critique_reasoning_efforts or CRITIQUE_REASONING_EFFORTS,
+        )
+        sys.stdout.write(table)
+        for failure in failures:
+            print(f"Critique reasoning evaluation issue: {failure}", file=sys.stderr)
+        return 1 if failures else 0
 
     if args.critique:
         path = args.paths[0]

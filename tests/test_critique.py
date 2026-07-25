@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import io
 import json
 import tempfile
@@ -370,6 +371,113 @@ class CritiqueRequestTests(unittest.TestCase):
         self.assertEqual(3, usage.output_tokens)
         self.assertEqual(13, usage.total_tokens)
 
+    def test_reasoning_effort_list_parses_and_rejects_invalid_values(self) -> None:
+        self.assertEqual(
+            ("low", "medium"),
+            behave.reasoning_effort_list("low, medium"),
+        )
+        with self.assertRaisesRegex(argparse.ArgumentTypeError, "unknown effort"):
+            behave.reasoning_effort_list("low,extra")
+
+    def test_rubric_score_request_uses_fixed_contract(self) -> None:
+        requirement = behave.requirement_excerpts(
+            Path("contract.md"),
+            ONE_REQUIREMENT,
+            "R-FIRST",
+        )[0]
+        response_payload = {
+            "status": "completed",
+            "usage": {
+                "input_tokens": 200,
+                "output_tokens": 20,
+                "total_tokens": 230,
+                "output_tokens_details": {"reasoning_tokens": 10},
+            },
+            "output": [
+                {
+                    "type": "message",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": (
+                                "Score: 8.5\n"
+                                "Note: Strong coverage with minor precision loss."
+                            ),
+                        }
+                    ],
+                }
+            ],
+        }
+
+        with mock.patch(
+            "behave.urlopen",
+            return_value=FakeResponse(response_payload),
+        ) as mocked_urlopen, mock.patch(
+            "behave.time.monotonic",
+            side_effect=[1.0, 3.5],
+        ):
+            score = behave.request_rubric_score(
+                "secret-key",
+                "rubric instructions",
+                requirement,
+                no_findings("R-FIRST"),
+            )
+
+        request = mocked_urlopen.call_args.args[0]
+        payload = json.loads(request.data.decode("utf-8"))
+        score_input = json.loads(payload["input"])
+
+        self.assertEqual(8.5, score.score)
+        self.assertEqual(
+            "Strong coverage with minor precision loss.",
+            score.note,
+        )
+        self.assertAlmostEqual(2.5, score.latency_seconds)
+        self.assertEqual(10, score.usage.reasoning_tokens)
+        self.assertEqual("gpt-5.6-sol", payload["model"])
+        self.assertEqual({"effort": "low"}, payload["reasoning"])
+        self.assertEqual(512, payload["max_output_tokens"])
+        self.assertEqual("R-FIRST", score_input["requirement_id"])
+        self.assertEqual(
+            requirement.markdown,
+            score_input["requirement_markdown"],
+        )
+        self.assertEqual(no_findings("R-FIRST"), score_input["critique_markdown"])
+
+    def test_rubric_score_rejects_malformed_response(self) -> None:
+        requirement = behave.requirement_excerpts(
+            Path("contract.md"),
+            ONE_REQUIREMENT,
+            "R-FIRST",
+        )[0]
+
+        with mock.patch(
+            "behave.urlopen",
+            return_value=FakeResponse(
+                {
+                    "status": "completed",
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Looks pretty good.",
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ),
+        ):
+            with self.assertRaises(behave.CritiqueError):
+                behave.request_rubric_score(
+                    "secret-key",
+                    "rubric instructions",
+                    requirement,
+                    no_findings("R-FIRST"),
+                )
+
 
 class CritiqueReportTests(unittest.TestCase):
     def test_report_calls_once_per_requirement_in_document_order(self) -> None:
@@ -492,6 +600,125 @@ class CritiqueReportTests(unittest.TestCase):
             "> Tokens: input `30`, reasoning `5`, output `6`, total `41`",
             report,
         )
+
+    def test_reasoning_evaluation_table_scores_each_effort(self) -> None:
+        critique_calls: list[str] = []
+        score_calls: list[str] = []
+
+        def critique(
+            api_key: str,
+            instructions: str,
+            requirement: behave.RequirementExcerpt,
+            reasoning_effort: str = behave.CRITIQUE_REASONING_EFFORT,
+            timeout: float = behave.CRITIQUE_TIMEOUT,
+        ) -> behave.CritiqueResult:
+            critique_calls.append(reasoning_effort)
+            if reasoning_effort == "none":
+                raise behave.CritiqueError("unsupported effort")
+            return behave.CritiqueResult(
+                no_findings(requirement.identifier),
+                2.0,
+                behave.CritiqueUsage(100, 10, 5, 115),
+            )
+
+        def score(
+            api_key: str,
+            instructions: str,
+            requirement: behave.RequirementExcerpt,
+            critique_fragment: str,
+            timeout: float = behave.CRITIQUE_TIMEOUT,
+        ) -> behave.RubricScore:
+            score_calls.append(requirement.identifier)
+            return behave.RubricScore(
+                8.5,
+                "Good coverage | concise.",
+                1.0,
+                behave.CritiqueUsage(50, 5, 3, 58),
+            )
+
+        with mock.patch(
+            "behave.request_critique",
+            side_effect=critique,
+        ), mock.patch(
+            "behave.request_rubric_score",
+            side_effect=score,
+        ):
+            table, failures = behave.generate_reasoning_evaluation_table(
+                Path("contract.md"),
+                ONE_REQUIREMENT,
+                "prompt\n",
+                "protocol\n",
+                "secret-key",
+                "R-FIRST",
+                ("none", "low"),
+            )
+
+        self.assertEqual(["none", "low"], critique_calls)
+        self.assertEqual(["R-FIRST"], score_calls)
+        self.assertEqual(["none: critique unavailable: unsupported effort"], failures)
+        self.assertIn(
+            "| `none` | 0 | n/a | unknown | unknown | 0.0 | n/a | unknown |",
+            table,
+        )
+        self.assertIn(
+            "| `low` | 0 | 2.0s | 10 | 115 | 8.5 | 1.0s | 58 |",
+            table,
+        )
+        self.assertIn("Good coverage \\| concise.", table)
+
+    def test_cli_emits_reasoning_evaluation_table(self) -> None:
+        table = "# Behave critique reasoning evaluation\n"
+        with tempfile.TemporaryDirectory() as directory:
+            contract = Path(directory) / "contract.md"
+            contract.write_text(ONE_REQUIREMENT, encoding="utf-8")
+            output = io.StringIO()
+            error = io.StringIO()
+
+            with mock.patch(
+                "behave.load_openai_api_key",
+                return_value="secret-key",
+            ), mock.patch(
+                "behave.generate_reasoning_evaluation_table",
+                return_value=(table, []),
+            ) as mocked_table, redirect_stdout(output), redirect_stderr(error):
+                status = behave.main(
+                    [
+                        "--critique-reasoning-eval",
+                        "R-FIRST",
+                        "--critique-reasoning-efforts",
+                        "low,medium",
+                        str(contract),
+                    ]
+                )
+
+        self.assertEqual(0, status)
+        self.assertEqual(table, output.getvalue())
+        self.assertEqual("", error.getvalue())
+        self.assertEqual("R-FIRST", mocked_table.call_args.args[5])
+        self.assertEqual(("low", "medium"), mocked_table.call_args.args[6])
+
+    def test_cli_rejects_missing_reasoning_evaluation_requirement_before_credentials(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            contract = Path(directory) / "contract.md"
+            contract.write_text(ONE_REQUIREMENT, encoding="utf-8")
+            output = io.StringIO()
+            error = io.StringIO()
+
+            with mock.patch(
+                "behave.load_openai_api_key"
+            ) as mocked_key, redirect_stdout(output), redirect_stderr(error):
+                status = behave.main(
+                    [
+                        "--critique-reasoning-eval",
+                        "R-MISSING",
+                        str(contract),
+                    ]
+                )
+
+        self.assertEqual(1, status)
+        self.assertEqual("", output.getvalue())
+        self.assertIn("R-MISSING", error.getvalue())
+        mocked_key.assert_not_called()
 
     def test_cli_rejects_invalid_spec_before_resolving_credentials(self) -> None:
         invalid = """### R-INVALID
@@ -676,6 +903,17 @@ Missing behavior.
                 [
                     "--critique-reasoning-effort",
                     "low",
+                    str(contract),
+                ],
+                [
+                    "--critique",
+                    "--critique-reasoning-efforts",
+                    "low,medium",
+                    str(contract),
+                ],
+                [
+                    "--critique-reasoning-efforts",
+                    "low,medium",
                     str(contract),
                 ],
             ]

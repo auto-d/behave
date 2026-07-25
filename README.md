@@ -256,6 +256,27 @@ The accepted effort names are `none`, `minimal`, `low`, `medium`, `high`, and
 `xhigh`. Support is model-specific; unsupported values fail through the API
 response.
 
+To tune the reasoning effort for a specific requirement, run every supported
+effort and score each returned critique with the built-in rubric:
+
+```sh
+$ python3 behave.py --critique-reasoning-eval R-EXAMPLE behavior.md
+```
+
+To limit cost during tuning, provide a comma-separated effort list:
+
+```sh
+$ python3 behave.py --critique-reasoning-eval R-EXAMPLE --critique-reasoning-efforts low,medium behavior.md
+```
+
+The table uses a ten-point rubric: material coverage is worth four points,
+precision three, diagnostic usefulness two, and contract cleanliness one.
+Scores are advisory and depend on the requirement's length, complexity, and
+language density. The table reports critique cost separately from rubric-judge
+cost so scoring overhead is visible. Each successful critique is scored in a
+separate rubric call that sees only the requirement and that critique, not the
+effort label, cost metadata, or other effort outputs.
+
 A report with no findings looks like:
 
 ```md

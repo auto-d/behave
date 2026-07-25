@@ -60,7 +60,7 @@ With findings:
 
 Rules:
 
-- Return at most three findings, numbered sequentially from 1.
+- Return all material findings, numbered sequentially from 1.
 - Use the exact requirement ID supplied in the input.
 - Target only a behavior or Evaluate clause that exists in the requirement.
 - Each Problem is one sentence, no more than 240 characters, and ends with

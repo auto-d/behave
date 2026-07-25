@@ -266,8 +266,9 @@ order:
 
 Findings are diagnostic only. The critic does not propose revisions,
 replacement wording, thresholds, policies, or evidence-collection methods.
-“No material evaluability issues identified” is advisory and is not a
-pass/fail declaration.
+Findings are not intentionally capped; each requirement report should include
+all material evaluability issues the model returns. “No material evaluability
+issues identified” is advisory and is not a pass/fail declaration.
 
 Each model response is checked against a strict Markdown template. If a request
 fails or its response is malformed, the report contains an explicit

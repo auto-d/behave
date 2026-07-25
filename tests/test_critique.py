@@ -84,8 +84,8 @@ class CritiqueValidationTests(unittest.TestCase):
             behave.critique_targets(requirement.markdown),
         )
 
-    def test_accepts_no_findings_and_three_findings(self) -> None:
-        targets = {"B1", "B1.E1", "B1.E2"}
+    def test_accepts_no_findings_and_multiple_findings(self) -> None:
+        targets = {"B1", "B1.E1", "B1.E2", "B2", "B2.E1"}
         findings = """## R-FIRST
 
 ### Finding 1: B1
@@ -98,7 +98,15 @@ class CritiqueValidationTests(unittest.TestCase):
 
 ### Finding 3: B1.E2
 
-**Problem:** The necessary comparison lacks essential information."""
+**Problem:** The necessary comparison lacks essential information.
+
+### Finding 4: B2
+
+**Problem:** The criteria conflict with the stated behavior.
+
+### Finding 5: B2.E1
+
+**Problem:** The criterion cannot distinguish satisfying evidence."""
 
         self.assertEqual(
             no_findings("R-FIRST"),
@@ -136,15 +144,6 @@ class CritiqueValidationTests(unittest.TestCase):
             "skipped number": (
                 "## R-FIRST\n\n### Finding 2: B1.E1\n\n"
                 f"{valid_problem}"
-            ),
-            "four findings": "\n\n".join(
-                [
-                    "## R-FIRST",
-                    *[
-                        f"### Finding {number}: B1.E1\n\n{valid_problem}"
-                        for number in range(1, 5)
-                    ],
-                ]
             ),
             "missing problem": "## R-FIRST\n\n### Finding 1: B1.E1",
             "extra field": (
@@ -236,7 +235,7 @@ class CritiqueRequestTests(unittest.TestCase):
         self.assertEqual({"effort": "high"}, payload["reasoning"])
         self.assertEqual({"verbosity": "low"}, payload["text"])
         self.assertFalse(payload["store"])
-        self.assertEqual(2048, payload["max_output_tokens"])
+        self.assertEqual(8192, payload["max_output_tokens"])
         self.assertEqual("R-FIRST", requirement_input["requirement_id"])
         self.assertEqual(
             requirement.markdown,

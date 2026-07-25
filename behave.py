@@ -64,7 +64,7 @@ CRITIQUE_PROMPT_PATH = TOOL_DIRECTORY / "CRITIQUE_PROMPT.md"
 OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
 CRITIQUE_MODEL = "gpt-5.6-sol"
 CRITIQUE_TIMEOUT = 120.0
-CRITIQUE_MAX_OUTPUT_TOKENS = 2048
+CRITIQUE_MAX_OUTPUT_TOKENS = 8192
 NO_FINDINGS_TEXT = "_No material evaluability issues identified._"
 UNUSABLE_RESPONSE_TEXT = (
     "_Critique unavailable because the model did not return a usable response._"
@@ -596,9 +596,6 @@ def validate_critique_fragment(
     index = 2
 
     while index < len(lines):
-        if finding_number > 3:
-            raise ValueError("response contains more than three findings")
-
         heading_match = CRITIQUE_FINDING_RE.fullmatch(lines[index])
         if not heading_match:
             raise ValueError("finding heading is malformed")

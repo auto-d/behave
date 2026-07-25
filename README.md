@@ -258,35 +258,38 @@ $ python3 behave.py --critique --critique-requirement R-EXAMPLE behavior.md
 ```
 
 ### Critic tuning
-To compare latency, token cost, and diagnostic quality across reasoning levels, override the reasoning effort for a run:
+To compare latency, token cost, and diagnostic quality across model families
+or reasoning levels, override either setting for a run:
 
 ```sh
-$ python3 behave.py --critique --critique-requirement R-EXAMPLE --critique-reasoning-effort low behavior.md
+$ python3 behave.py --critique --critique-requirement R-EXAMPLE --critique-model gpt-5.6-terra --critique-reasoning-effort low behavior.md
 ```
 
-The accepted effort names are `none`, `minimal`, `low`, `medium`, `high`, and
-`xhigh`. Support is model-specific; unsupported values fail through the API
-response.
+The accepted critique models are `gpt-5.6-sol`, `gpt-5.6-terra`, and
+`gpt-5.6-luna`. The accepted effort names are `none`, `low`, `medium`, `high`,
+`xhigh`, and `max`. Support is model-specific; unsupported combinations fail
+through the API response.
 
-To tune the reasoning effort for a specific requirement, run every supported
-effort and score each returned critique with the built-in rubric:
+To tune model and reasoning choices for a specific requirement, run every
+supported model and effort and score each returned critique with the built-in
+rubric:
 
 ```sh
 $ python3 behave.py --critique-reasoning-eval R-EXAMPLE behavior.md
 ```
 
-To limit cost during tuning, provide a comma-separated effort list:
+To limit cost during tuning, provide comma-separated model and effort lists:
 
 ```sh
-$ python3 behave.py --critique-reasoning-eval R-EXAMPLE --critique-reasoning-efforts low,medium behavior.md
+$ python3 behave.py --critique-reasoning-eval R-EXAMPLE --critique-models gpt-5.6-terra,gpt-5.6-luna --critique-reasoning-efforts low,medium behavior.md
 ```
 
 The output is a Markdown table:
 
-| Effort | Findings | Critique latency | Critique reasoning tokens | Critique total tokens | Score | Score latency | Score total tokens | Note |
-|---|---:|---:|---:|---:|---:|---:|---:|---|
-| `low` | 4 | 7.1s | 366 | 2,843 | 8.0 | 6.4s | 2,410 | Finds the main material gaps with concise wording. |
-| `medium` | 4 | 11.7s | 516 | 3,002 | 8.5 | 6.8s | 2,438 | Same coverage as low with slightly sharper precision. |
+| Model | Effort | Findings | Critique latency | Critique reasoning tokens | Critique total tokens | Score | Score latency | Score total tokens | Note |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---|
+| `gpt-5.6-terra` | `low` | 4 | 7.1s | 366 | 2,843 | 8.0 | 6.4s | 2,410 | Finds the main material gaps with concise wording. |
+| `gpt-5.6-luna` | `medium` | 4 | 11.7s | 516 | 3,002 | 8.5 | 6.8s | 2,438 | Same coverage as low with slightly sharper precision. |
 
 The table uses a ten-point rubric: material coverage is worth four points,
 precision three, diagnostic usefulness two, and contract cleanliness one.
@@ -294,7 +297,9 @@ Scores are advisory and depend on the requirement's length, complexity, and
 language density. The table reports critique cost separately from rubric-judge
 cost so scoring overhead is visible. Each successful critique is scored in a
 separate rubric call that sees only the requirement and that critique, not the
-effort label, cost metadata, or other effort outputs.
+model name, effort label, cost metadata, or other candidate outputs. The
+rubric judge is fixed at `gpt-5.6-sol` with `low` reasoning so candidate
+models do not score themselves.
 
 A report with no findings looks like:
 

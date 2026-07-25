@@ -247,6 +247,7 @@ class CritiqueRequestTests(unittest.TestCase):
                 "system instructions",
                 requirement,
                 "low",
+                "gpt-5.6-terra",
             )
 
         request = mocked_urlopen.call_args.args[0]
@@ -259,7 +260,7 @@ class CritiqueRequestTests(unittest.TestCase):
         self.assertEqual(1024, result.usage.reasoning_tokens)
         self.assertEqual(126, result.usage.output_tokens)
         self.assertEqual(5962, result.usage.total_tokens)
-        self.assertEqual("gpt-5.6-sol", payload["model"])
+        self.assertEqual("gpt-5.6-terra", payload["model"])
         self.assertEqual({"effort": "low"}, payload["reasoning"])
         self.assertEqual({"verbosity": "low"}, payload["text"])
         self.assertFalse(payload["store"])
@@ -373,11 +374,19 @@ class CritiqueRequestTests(unittest.TestCase):
 
     def test_reasoning_effort_list_parses_and_rejects_invalid_values(self) -> None:
         self.assertEqual(
-            ("low", "medium"),
-            behave.reasoning_effort_list("low, medium"),
+            ("low", "max"),
+            behave.reasoning_effort_list("low, max"),
         )
         with self.assertRaisesRegex(argparse.ArgumentTypeError, "unknown effort"):
             behave.reasoning_effort_list("low,extra")
+
+    def test_critique_model_list_parses_and_rejects_invalid_values(self) -> None:
+        self.assertEqual(
+            ("gpt-5.6-terra", "gpt-5.6-luna"),
+            behave.critique_model_list("gpt-5.6-terra, gpt-5.6-luna"),
+        )
+        with self.assertRaisesRegex(argparse.ArgumentTypeError, "unknown model"):
+            behave.critique_model_list("gpt-5.6-terra,gpt-4.1")
 
     def test_rubric_score_request_uses_fixed_contract(self) -> None:
         requirement = behave.requirement_excerpts(
@@ -488,6 +497,7 @@ class CritiqueReportTests(unittest.TestCase):
             instructions: str,
             requirement: behave.RequirementExcerpt,
             reasoning_effort: str = behave.CRITIQUE_REASONING_EFFORT,
+            model: str = behave.CRITIQUE_MODEL,
             timeout: float = behave.CRITIQUE_TIMEOUT,
         ) -> behave.CritiqueResult:
             identifiers.append(requirement.identifier)
@@ -534,6 +544,7 @@ class CritiqueReportTests(unittest.TestCase):
             instructions: str,
             requirement: behave.RequirementExcerpt,
             reasoning_effort: str = behave.CRITIQUE_REASONING_EFFORT,
+            model: str = behave.CRITIQUE_MODEL,
             timeout: float = behave.CRITIQUE_TIMEOUT,
         ) -> behave.CritiqueResult:
             identifiers.append(requirement.identifier)
@@ -610,10 +621,11 @@ class CritiqueReportTests(unittest.TestCase):
             instructions: str,
             requirement: behave.RequirementExcerpt,
             reasoning_effort: str = behave.CRITIQUE_REASONING_EFFORT,
+            model: str = behave.CRITIQUE_MODEL,
             timeout: float = behave.CRITIQUE_TIMEOUT,
         ) -> behave.CritiqueResult:
-            critique_calls.append(reasoning_effort)
-            if reasoning_effort == "none":
+            critique_calls.append(f"{model}/{reasoning_effort}")
+            if model == "gpt-5.6-sol" and reasoning_effort == "none":
                 raise behave.CritiqueError("unsupported effort")
             return behave.CritiqueResult(
                 no_findings(requirement.identifier),
@@ -626,9 +638,10 @@ class CritiqueReportTests(unittest.TestCase):
             instructions: str,
             requirement: behave.RequirementExcerpt,
             critique_fragment: str,
+            model: str = behave.RUBRIC_MODEL,
             timeout: float = behave.CRITIQUE_TIMEOUT,
         ) -> behave.RubricScore:
-            score_calls.append(requirement.identifier)
+            score_calls.append(f"{model}/{requirement.identifier}")
             return behave.RubricScore(
                 8.5,
                 "Good coverage | concise.",
@@ -651,19 +664,41 @@ class CritiqueReportTests(unittest.TestCase):
                 "secret-key",
                 "R-FIRST",
                 ("none", "low"),
+                ("gpt-5.6-sol", "gpt-5.6-luna"),
             )
 
-        self.assertEqual(["none", "low"], critique_calls)
-        self.assertEqual(["R-FIRST"], score_calls)
-        self.assertEqual(["none: critique unavailable: unsupported effort"], failures)
+        self.assertEqual(
+            [
+                "gpt-5.6-sol/none",
+                "gpt-5.6-sol/low",
+                "gpt-5.6-luna/none",
+                "gpt-5.6-luna/low",
+            ],
+            critique_calls,
+        )
+        self.assertEqual(
+            [
+                "gpt-5.6-sol/R-FIRST",
+                "gpt-5.6-sol/R-FIRST",
+                "gpt-5.6-sol/R-FIRST",
+            ],
+            score_calls,
+        )
+        self.assertEqual(
+            [
+                "gpt-5.6-sol/none: critique unavailable: unsupported effort"
+            ],
+            failures,
+        )
         self.assertIn(
-            "| `none` | 0 | n/a | unknown | unknown | 0.0 | n/a | unknown |",
+            "| `gpt-5.6-sol` | `none` | 0 | n/a | unknown | unknown | 0.0 | n/a | unknown |",
             table,
         )
         self.assertIn(
-            "| `low` | 0 | 2.0s | 10 | 115 | 8.5 | 1.0s | 58 |",
+            "| `gpt-5.6-sol` | `low` | 0 | 2.0s | 10 | 115 | 8.5 | 1.0s | 58 |",
             table,
         )
+        self.assertIn("> Critique models: `gpt-5.6-sol, gpt-5.6-luna`", table)
         self.assertIn("Good coverage \\| concise.", table)
 
     def test_cli_emits_reasoning_evaluation_table(self) -> None:
@@ -687,6 +722,8 @@ class CritiqueReportTests(unittest.TestCase):
                         "R-FIRST",
                         "--critique-reasoning-efforts",
                         "low,medium",
+                        "--critique-models",
+                        "gpt-5.6-terra,gpt-5.6-luna",
                         str(contract),
                     ]
                 )
@@ -696,6 +733,10 @@ class CritiqueReportTests(unittest.TestCase):
         self.assertEqual("", error.getvalue())
         self.assertEqual("R-FIRST", mocked_table.call_args.args[5])
         self.assertEqual(("low", "medium"), mocked_table.call_args.args[6])
+        self.assertEqual(
+            ("gpt-5.6-terra", "gpt-5.6-luna"),
+            mocked_table.call_args.args[7],
+        )
 
     def test_cli_rejects_missing_reasoning_evaluation_requirement_before_credentials(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -823,6 +864,8 @@ Missing behavior.
                         "R-SECOND",
                         "--critique-reasoning-effort",
                         "low",
+                        "--critique-model",
+                        "gpt-5.6-terra",
                         str(contract),
                     ]
                 )
@@ -831,6 +874,7 @@ Missing behavior.
         self.assertEqual(complete_report, output.getvalue())
         self.assertEqual("R-SECOND", mocked_report.call_args.args[5])
         self.assertEqual("low", mocked_report.call_args.args[6])
+        self.assertEqual("gpt-5.6-terra", mocked_report.call_args.args[7])
 
     def test_cli_rejects_missing_target_requirement_before_credentials(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -912,8 +956,24 @@ Missing behavior.
                     str(contract),
                 ],
                 [
+                    "--critique",
+                    "--critique-models",
+                    "gpt-5.6-terra",
+                    str(contract),
+                ],
+                [
                     "--critique-reasoning-efforts",
                     "low,medium",
+                    str(contract),
+                ],
+                [
+                    "--critique-model",
+                    "gpt-5.6-terra",
+                    str(contract),
+                ],
+                [
+                    "--critique-models",
+                    "gpt-5.6-terra",
                     str(contract),
                 ],
             ]

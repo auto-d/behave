@@ -68,14 +68,19 @@ PROTOCOL_PATH = TOOL_DIRECTORY / "PROTOCOL.md"
 CRITIQUE_PROMPT_PATH = TOOL_DIRECTORY / "CRITIQUE_PROMPT.md"
 OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
 CRITIQUE_MODEL = "gpt-5.6-sol"
+CRITIQUE_MODELS = (
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+)
 CRITIQUE_REASONING_EFFORT = "high"
 CRITIQUE_REASONING_EFFORTS = (
     "none",
-    "minimal",
     "low",
     "medium",
     "high",
     "xhigh",
+    "max",
 )
 CRITIQUE_TIMEOUT = 120.0
 CRITIQUE_MAX_OUTPUT_TOKENS = 8192
@@ -187,6 +192,7 @@ class RubricScore:
 
 @dataclass(frozen=True)
 class ReasoningEvaluation:
+    model: str
     effort: str
     findings: int
     critique_latency_seconds: float | None
@@ -828,6 +834,7 @@ def request_critique(
     instructions: str,
     requirement: RequirementExcerpt,
     reasoning_effort: str = CRITIQUE_REASONING_EFFORT,
+    model: str = CRITIQUE_MODEL,
     timeout: float = CRITIQUE_TIMEOUT,
 ) -> CritiqueResult:
     """Request one requirement critique through the OpenAI Responses API."""
@@ -839,7 +846,7 @@ def request_critique(
         ensure_ascii=False,
     )
     request_payload = {
-        "model": CRITIQUE_MODEL,
+        "model": model,
         "instructions": instructions,
         "input": input_payload,
         "reasoning": {"effort": reasoning_effort},
@@ -939,6 +946,7 @@ def request_rubric_score(
     instructions: str,
     requirement: RequirementExcerpt,
     critique_fragment: str,
+    model: str = RUBRIC_MODEL,
     timeout: float = CRITIQUE_TIMEOUT,
 ) -> RubricScore:
     """Score one accepted critique fragment using the rubric."""
@@ -951,7 +959,7 @@ def request_rubric_score(
         ensure_ascii=False,
     )
     request_payload = {
-        "model": RUBRIC_MODEL,
+        "model": model,
         "instructions": instructions,
         "input": input_payload,
         "reasoning": {"effort": RUBRIC_REASONING_EFFORT},
@@ -1016,6 +1024,7 @@ def generate_critique_report(
     api_key: str,
     requirement_id: str | None = None,
     reasoning_effort: str = CRITIQUE_REASONING_EFFORT,
+    model: str = CRITIQUE_MODEL,
 ) -> tuple[str, list[str]]:
     """Generate a report and return any per-requirement failure diagnostics."""
     instructions = critique_instructions(prompt, protocol)
@@ -1044,6 +1053,7 @@ def generate_critique_report(
                 instructions,
                 requirement,
                 reasoning_effort,
+                model,
             )
         except CritiqueError as exc:
             failures.append(f"{summary.identifier}: {exc}")
@@ -1097,7 +1107,7 @@ def generate_critique_report(
             "# Behave evaluability critique",
             "",
             f"> Source specification: `{escaped_path}`",
-            f"> Model: `{CRITIQUE_MODEL}`",
+            f"> Model: `{model}`",
             f"> Reasoning effort: `{reasoning_effort}`",
             f"> Total latency: `{format_seconds(total_latency)}`",
             f"> API calls: `{api_calls}`",
@@ -1124,8 +1134,10 @@ def generate_reasoning_evaluation_table(
     api_key: str,
     requirement_id: str,
     efforts: Sequence[str] = CRITIQUE_REASONING_EFFORTS,
+    models: Sequence[str] = CRITIQUE_MODELS,
+    rubric_model: str = RUBRIC_MODEL,
 ) -> tuple[str, list[str]]:
-    """Run one requirement at several reasoning efforts and score each result."""
+    """Run one requirement across model/effort pairs and score each result."""
     requirement = requirement_excerpts(path, text, requirement_id)[0]
     critique_prompt = critique_instructions(prompt, protocol)
     score_prompt = rubric_instructions(protocol)
@@ -1133,93 +1145,101 @@ def generate_reasoning_evaluation_table(
     evaluations: list[ReasoningEvaluation] = []
     failures: list[str] = []
 
-    for effort in efforts:
-        try:
-            result = request_critique(
-                api_key,
-                critique_prompt,
-                requirement,
-                effort,
-            )
-        except CritiqueError as exc:
-            message = str(exc)
-            failures.append(f"{effort}: critique unavailable: {message}")
-            evaluations.append(
-                ReasoningEvaluation(
-                    effort=effort,
-                    findings=0,
-                    critique_latency_seconds=None,
-                    critique_usage=CritiqueUsage(),
-                    score=0.0,
-                    note=f"Critique unavailable: {message}",
-                    score_latency_seconds=None,
-                    score_usage=CritiqueUsage(),
-                    error=message,
+    for model in models:
+        for effort in efforts:
+            label = f"{model}/{effort}"
+            try:
+                result = request_critique(
+                    api_key,
+                    critique_prompt,
+                    requirement,
+                    effort,
+                    model,
                 )
-            )
-            continue
-
-        try:
-            accepted_fragment = validate_critique_fragment(
-                requirement_id,
-                result.text,
-                targets,
-            )
-        except ValueError as exc:
-            message = f"model response was malformed: {exc}"
-            failures.append(f"{effort}: {message}")
-            evaluations.append(
-                ReasoningEvaluation(
-                    effort=effort,
-                    findings=0,
-                    critique_latency_seconds=result.latency_seconds,
-                    critique_usage=result.usage,
-                    score=0.0,
-                    note=message,
-                    score_latency_seconds=None,
-                    score_usage=CritiqueUsage(),
-                    error=message,
+            except CritiqueError as exc:
+                message = str(exc)
+                failures.append(f"{label}: critique unavailable: {message}")
+                evaluations.append(
+                    ReasoningEvaluation(
+                        model=model,
+                        effort=effort,
+                        findings=0,
+                        critique_latency_seconds=None,
+                        critique_usage=CritiqueUsage(),
+                        score=0.0,
+                        note=f"Critique unavailable: {message}",
+                        score_latency_seconds=None,
+                        score_usage=CritiqueUsage(),
+                        error=message,
+                    )
                 )
-            )
-            continue
+                continue
 
-        try:
-            score = request_rubric_score(
-                api_key,
-                score_prompt,
-                requirement,
-                accepted_fragment,
-            )
-        except CritiqueError as exc:
-            message = f"rubric score unavailable: {exc}"
-            failures.append(f"{effort}: {message}")
+            try:
+                accepted_fragment = validate_critique_fragment(
+                    requirement_id,
+                    result.text,
+                    targets,
+                )
+            except ValueError as exc:
+                message = f"model response was malformed: {exc}"
+                failures.append(f"{label}: {message}")
+                evaluations.append(
+                    ReasoningEvaluation(
+                        model=model,
+                        effort=effort,
+                        findings=0,
+                        critique_latency_seconds=result.latency_seconds,
+                        critique_usage=result.usage,
+                        score=0.0,
+                        note=message,
+                        score_latency_seconds=None,
+                        score_usage=CritiqueUsage(),
+                        error=message,
+                    )
+                )
+                continue
+
+            try:
+                score = request_rubric_score(
+                    api_key,
+                    score_prompt,
+                    requirement,
+                    accepted_fragment,
+                    rubric_model,
+                )
+            except CritiqueError as exc:
+                message = f"rubric score unavailable: {exc}"
+                failures.append(f"{label}: {message}")
+                evaluations.append(
+                    ReasoningEvaluation(
+                        model=model,
+                        effort=effort,
+                        findings=count_findings(accepted_fragment),
+                        critique_latency_seconds=result.latency_seconds,
+                        critique_usage=result.usage,
+                        score=0.0,
+                        note=message,
+                        score_latency_seconds=None,
+                        score_usage=CritiqueUsage(),
+                        error=message,
+                    )
+                )
+                continue
+
             evaluations.append(
                 ReasoningEvaluation(
+                    model=model,
                     effort=effort,
                     findings=count_findings(accepted_fragment),
                     critique_latency_seconds=result.latency_seconds,
                     critique_usage=result.usage,
-                    score=0.0,
-                    note=message,
-                    score_latency_seconds=None,
-                    score_usage=CritiqueUsage(),
-                    error=message,
+                    score=score.score,
+                    note=score.note,
+                    score_latency_seconds=score.latency_seconds,
+                    score_usage=score.usage,
                 )
             )
-            continue
-
-        evaluations.append(
-            ReasoningEvaluation(
-                effort=effort,
-                findings=count_findings(accepted_fragment),
-                critique_latency_seconds=result.latency_seconds,
-                critique_usage=result.usage,
-                score=score.score,
-                note=score.note,
-                score_latency_seconds=score.latency_seconds,
-                score_usage=score.usage,
-            )
-        )
 
     escaped_path = str(path).replace("`", "\\`")
     lines = [
@@ -1227,8 +1247,9 @@ def generate_reasoning_evaluation_table(
         "",
         f"> Source specification: `{escaped_path}`",
         f"> Requirement: `{requirement_id}`",
-        f"> Critique model: `{CRITIQUE_MODEL}`",
-        f"> Rubric model: `{RUBRIC_MODEL}`",
+        f"> Critique models: `{', '.join(models)}`",
+        f"> Critique reasoning efforts: `{', '.join(efforts)}`",
+        f"> Rubric model: `{rubric_model}`",
         f"> Rubric reasoning effort: `{RUBRIC_REASONING_EFFORT}`",
         "",
         (
@@ -1237,10 +1258,10 @@ def generate_reasoning_evaluation_table(
         ),
         "",
         (
-            "| Effort | Findings | Critique latency | Critique reasoning tokens | "
+            "| Model | Effort | Findings | Critique latency | Critique reasoning tokens | "
             "Critique total tokens | Score | Score latency | Score total tokens | Note |"
         ),
-        "|---|---:|---:|---:|---:|---:|---:|---:|---|",
+        "|---|---|---:|---:|---:|---:|---:|---:|---:|---|",
     ]
     for evaluation in evaluations:
         critique_latency = (
@@ -1255,6 +1276,7 @@ def generate_reasoning_evaluation_table(
         )
         lines.append(
             "| "
+            f"`{evaluation.model}` | "
             f"`{evaluation.effort}` | "
             f"{evaluation.findings} | "
             f"{critique_latency} | "
@@ -1649,6 +1671,21 @@ def reasoning_effort_list(value: str) -> tuple[str, ...]:
     return efforts
 
 
+def critique_model_list(value: str) -> tuple[str, ...]:
+    models = tuple(item.strip() for item in value.split(",") if item.strip())
+    if not models:
+        raise argparse.ArgumentTypeError("must include at least one model")
+
+    invalid = [model for model in models if model not in CRITIQUE_MODELS]
+    if invalid:
+        allowed = ", ".join(CRITIQUE_MODELS)
+        raise argparse.ArgumentTypeError(
+            f"unknown model {invalid[0]!r}; expected one of: {allowed}"
+        )
+
+    return models
+
+
 def iter_markdown_files(inputs: Iterable[Path]) -> list[Path]:
     files: list[Path] = []
     for path in inputs:
@@ -1731,12 +1768,30 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--critique-model",
+        choices=CRITIQUE_MODELS,
+        metavar="MODEL",
+        help=(
+            "with --critique, set the critique model "
+            f"(default: {CRITIQUE_MODEL})"
+        ),
+    )
+    parser.add_argument(
         "--critique-reasoning-efforts",
         type=reasoning_effort_list,
         metavar="EFFORTS",
         help=(
             "with --critique-reasoning-eval, comma-separated reasoning "
             "efforts to compare"
+        ),
+    )
+    parser.add_argument(
+        "--critique-models",
+        type=critique_model_list,
+        metavar="MODELS",
+        help=(
+            "with --critique-reasoning-eval, comma-separated critique "
+            "models to compare"
         ),
     )
     return parser
@@ -1757,6 +1812,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             parser.error("--critique cannot be combined with reference checks")
         if args.critique_reasoning_efforts is not None:
             parser.error("--critique-reasoning-efforts requires --critique-reasoning-eval")
+        if args.critique_models is not None:
+            parser.error("--critique-models requires --critique-reasoning-eval")
         if (
             args.critique_requirement
             and not REQUIREMENT_ID_RE.fullmatch(args.critique_requirement)
@@ -1768,11 +1825,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error("--critique-requirement requires --critique")
     elif args.critique_reasoning_effort is not None:
         parser.error("--critique-reasoning-effort requires --critique")
+    elif args.critique_model is not None:
+        parser.error("--critique-model requires --critique")
     elif (
         args.critique_reasoning_efforts is not None
         and not args.critique_reasoning_eval
     ):
         parser.error("--critique-reasoning-efforts requires --critique-reasoning-eval")
+    elif args.critique_models is not None and not args.critique_reasoning_eval:
+        parser.error("--critique-models requires --critique-reasoning-eval")
 
     if args.critique_reasoning_eval:
         if len(args.paths) != 1 or args.paths[0].is_dir():
@@ -1871,6 +1932,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             api_key,
             args.critique_reasoning_eval,
             args.critique_reasoning_efforts or CRITIQUE_REASONING_EFFORTS,
+            args.critique_models or CRITIQUE_MODELS,
         )
         sys.stdout.write(table)
         for failure in failures:
@@ -1961,6 +2023,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             api_key,
             args.critique_requirement,
             args.critique_reasoning_effort or CRITIQUE_REASONING_EFFORT,
+            args.critique_model or CRITIQUE_MODEL,
         )
         sys.stdout.write(report)
         for failure in failures:

@@ -21,7 +21,7 @@ import sys
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Callable, Iterable, Sequence
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -1136,6 +1136,7 @@ def generate_reasoning_evaluation_table(
     efforts: Sequence[str] = CRITIQUE_REASONING_EFFORTS,
     models: Sequence[str] = CRITIQUE_MODELS,
     rubric_model: str = RUBRIC_MODEL,
+    progress: Callable[[str], None] | None = None,
 ) -> tuple[str, list[str]]:
     """Run one requirement across model/effort pairs and score each result."""
     requirement = requirement_excerpts(path, text, requirement_id)[0]
@@ -1144,10 +1145,28 @@ def generate_reasoning_evaluation_table(
     targets = critique_targets(requirement.markdown)
     evaluations: list[ReasoningEvaluation] = []
     failures: list[str] = []
+    total_runs = len(models) * len(efforts)
+    completed_runs = 0
+    succeeded_runs = 0
+    overall_started = time.monotonic()
+
+    if progress is not None:
+        progress(
+            f"Critique eval: {requirement_id} across {len(models)} model(s) "
+            f"x {len(efforts)} effort(s) = {total_runs} run(s)"
+        )
 
     for model in models:
         for effort in efforts:
+            completed_runs += 1
             label = f"{model}/{effort}"
+            display_label = f"{model} / {effort}"
+            pair_started = time.monotonic()
+            if progress is not None:
+                progress(
+                    f"Critique eval {completed_runs}/{total_runs}: "
+                    f"{display_label}: requesting critique..."
+                )
             try:
                 result = request_critique(
                     api_key,
@@ -1159,6 +1178,11 @@ def generate_reasoning_evaluation_table(
             except CritiqueError as exc:
                 message = str(exc)
                 failures.append(f"{label}: critique unavailable: {message}")
+                if progress is not None:
+                    progress(
+                        f"Critique eval {completed_runs}/{total_runs}: "
+                        f"{display_label}: failed: {message}"
+                    )
                 evaluations.append(
                     ReasoningEvaluation(
                         model=model,
@@ -1184,6 +1208,11 @@ def generate_reasoning_evaluation_table(
             except ValueError as exc:
                 message = f"model response was malformed: {exc}"
                 failures.append(f"{label}: {message}")
+                if progress is not None:
+                    progress(
+                        f"Critique eval {completed_runs}/{total_runs}: "
+                        f"{display_label}: failed: {message}"
+                    )
                 evaluations.append(
                     ReasoningEvaluation(
                         model=model,
@@ -1200,6 +1229,11 @@ def generate_reasoning_evaluation_table(
                 )
                 continue
 
+            if progress is not None:
+                progress(
+                    f"Critique eval {completed_runs}/{total_runs}: "
+                    f"{display_label}: scoring critique..."
+                )
             try:
                 score = request_rubric_score(
                     api_key,
@@ -1211,6 +1245,11 @@ def generate_reasoning_evaluation_table(
             except CritiqueError as exc:
                 message = f"rubric score unavailable: {exc}"
                 failures.append(f"{label}: {message}")
+                if progress is not None:
+                    progress(
+                        f"Critique eval {completed_runs}/{total_runs}: "
+                        f"{display_label}: failed: {message}"
+                    )
                 evaluations.append(
                     ReasoningEvaluation(
                         model=model,
@@ -1240,6 +1279,22 @@ def generate_reasoning_evaluation_table(
                     score_usage=score.usage,
                 )
             )
+            succeeded_runs += 1
+            if progress is not None:
+                progress(
+                    f"Critique eval {completed_runs}/{total_runs}: "
+                    f"{display_label}: complete in "
+                    f"{format_seconds(time.monotonic() - pair_started)}, "
+                    f"score {score.score:.1f}, tokens critique "
+                    f"{format_count(result.usage.total_tokens)} + score "
+                    f"{format_count(score.usage.total_tokens)}"
+                )
+
+    if progress is not None:
+        progress(
+            f"Critique eval complete: {succeeded_runs}/{total_runs} "
+            f"succeeded in {format_seconds(time.monotonic() - overall_started)}"
+        )
 
     escaped_path = str(path).replace("`", "\\`")
     lines = [
@@ -1712,6 +1767,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="emit diagnostics as JSON",
     )
     parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="with --critique-reasoning-eval, suppress progress messages",
+    )
+    parser.add_argument(
         "--check-external-references",
         action="store_true",
         help="fetch HTTP(S) URLs in References sections and report failures",
@@ -1810,6 +1870,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             parser.error("--critique cannot be combined with --json")
         if args.check_references or args.check_external_references:
             parser.error("--critique cannot be combined with reference checks")
+        if args.quiet:
+            parser.error("--quiet requires --critique-reasoning-eval")
         if args.critique_reasoning_efforts is not None:
             parser.error("--critique-reasoning-efforts requires --critique-reasoning-eval")
         if args.critique_models is not None:
@@ -1834,6 +1896,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error("--critique-reasoning-efforts requires --critique-reasoning-eval")
     elif args.critique_models is not None and not args.critique_reasoning_eval:
         parser.error("--critique-models requires --critique-reasoning-eval")
+    elif args.quiet and not args.critique_reasoning_eval:
+        parser.error("--quiet requires --critique-reasoning-eval")
 
     if args.critique_reasoning_eval:
         if len(args.paths) != 1 or args.paths[0].is_dir():
@@ -1933,6 +1997,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.critique_reasoning_eval,
             args.critique_reasoning_efforts or CRITIQUE_REASONING_EFFORTS,
             args.critique_models or CRITIQUE_MODELS,
+            progress=(
+                None
+                if args.quiet
+                else lambda message: print(message, file=sys.stderr, flush=True)
+            ),
         )
         sys.stdout.write(table)
         for failure in failures:

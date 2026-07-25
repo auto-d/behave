@@ -284,6 +284,14 @@ To limit cost during tuning, provide comma-separated model and effort lists:
 $ python3 behave.py --critique-reasoning-eval R-EXAMPLE --critique-models gpt-5.6-terra,gpt-5.6-luna --critique-reasoning-efforts low,medium behavior.md
 ```
 
+Because reasoning evaluation can take time, the command prints progress to
+stderr while preserving the Markdown table on stdout. Use `--quiet` to suppress
+progress messages:
+
+```sh
+$ python3 behave.py --quiet --critique-reasoning-eval R-EXAMPLE --critique-models gpt-5.6-luna --critique-reasoning-efforts low behavior.md
+```
+
 The output is a Markdown table:
 
 | Model | Effort | Findings | Critique latency | Critique reasoning tokens | Critique total tokens | Score | Score latency | Score total tokens | Note |

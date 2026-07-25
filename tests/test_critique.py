@@ -615,6 +615,7 @@ class CritiqueReportTests(unittest.TestCase):
     def test_reasoning_evaluation_table_scores_each_effort(self) -> None:
         critique_calls: list[str] = []
         score_calls: list[str] = []
+        progress_events: list[str] = []
 
         def critique(
             api_key: str,
@@ -665,6 +666,7 @@ class CritiqueReportTests(unittest.TestCase):
                 "R-FIRST",
                 ("none", "low"),
                 ("gpt-5.6-sol", "gpt-5.6-luna"),
+                progress=progress_events.append,
             )
 
         self.assertEqual(
@@ -700,6 +702,36 @@ class CritiqueReportTests(unittest.TestCase):
         )
         self.assertIn("> Critique models: `gpt-5.6-sol, gpt-5.6-luna`", table)
         self.assertIn("Good coverage \\| concise.", table)
+        self.assertEqual(
+            "Critique eval: R-FIRST across 2 model(s) x 2 effort(s) = 4 run(s)",
+            progress_events[0],
+        )
+        self.assertIn(
+            "Critique eval 1/4: gpt-5.6-sol / none: requesting critique...",
+            progress_events,
+        )
+        self.assertIn(
+            "Critique eval 1/4: gpt-5.6-sol / none: failed: unsupported effort",
+            progress_events,
+        )
+        self.assertIn(
+            "Critique eval 2/4: gpt-5.6-sol / low: scoring critique...",
+            progress_events,
+        )
+        self.assertTrue(
+            any(
+                event.startswith(
+                    "Critique eval 2/4: gpt-5.6-sol / low: complete in "
+                )
+                and "score 8.5, tokens critique 115 + score 58" in event
+                for event in progress_events
+            )
+        )
+        self.assertTrue(
+            progress_events[-1].startswith(
+                "Critique eval complete: 3/4 succeeded in "
+            )
+        )
 
     def test_cli_emits_reasoning_evaluation_table(self) -> None:
         table = "# Behave critique reasoning evaluation\n"
@@ -737,6 +769,91 @@ class CritiqueReportTests(unittest.TestCase):
             ("gpt-5.6-terra", "gpt-5.6-luna"),
             mocked_table.call_args.args[7],
         )
+
+    def test_cli_writes_reasoning_evaluation_progress_to_stderr(self) -> None:
+        table = "# Behave critique reasoning evaluation\n"
+
+        def generate(
+            *args: object,
+            progress: object = None,
+        ) -> tuple[str, list[str]]:
+            assert callable(progress)
+            progress("Critique eval 1/1: gpt-5.6-luna / low: requesting critique...")
+            return table, []
+
+        with tempfile.TemporaryDirectory() as directory:
+            contract = Path(directory) / "contract.md"
+            contract.write_text(ONE_REQUIREMENT, encoding="utf-8")
+            output = io.StringIO()
+            error = io.StringIO()
+
+            with mock.patch(
+                "behave.load_openai_api_key",
+                return_value="secret-key",
+            ), mock.patch(
+                "behave.generate_reasoning_evaluation_table",
+                side_effect=generate,
+            ), redirect_stdout(output), redirect_stderr(error):
+                status = behave.main(
+                    [
+                        "--critique-reasoning-eval",
+                        "R-FIRST",
+                        "--critique-reasoning-efforts",
+                        "low",
+                        "--critique-models",
+                        "gpt-5.6-luna",
+                        str(contract),
+                    ]
+                )
+
+        self.assertEqual(0, status)
+        self.assertEqual(table, output.getvalue())
+        self.assertIn(
+            "Critique eval 1/1: gpt-5.6-luna / low: requesting critique...",
+            error.getvalue(),
+        )
+
+    def test_cli_quiet_suppresses_reasoning_evaluation_progress(self) -> None:
+        table = "# Behave critique reasoning evaluation\n"
+        progress_values: list[object] = []
+
+        def generate(
+            *args: object,
+            progress: object = None,
+        ) -> tuple[str, list[str]]:
+            progress_values.append(progress)
+            return table, []
+
+        with tempfile.TemporaryDirectory() as directory:
+            contract = Path(directory) / "contract.md"
+            contract.write_text(ONE_REQUIREMENT, encoding="utf-8")
+            output = io.StringIO()
+            error = io.StringIO()
+
+            with mock.patch(
+                "behave.load_openai_api_key",
+                return_value="secret-key",
+            ), mock.patch(
+                "behave.generate_reasoning_evaluation_table",
+                side_effect=generate,
+            ), redirect_stdout(output), redirect_stderr(error):
+                status = behave.main(
+                    [
+                        "--quiet",
+                        "--critique-reasoning-eval",
+                        "R-FIRST",
+                        "--critique-reasoning-efforts",
+                        "low",
+                        "--critique-models",
+                        "gpt-5.6-luna",
+                        str(contract),
+                    ]
+                )
+
+        self.assertEqual(0, status)
+        self.assertEqual(table, output.getvalue())
+        self.assertEqual("", error.getvalue())
+        self.assertEqual([None], progress_values)
 
     def test_cli_rejects_missing_reasoning_evaluation_requirement_before_credentials(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -961,6 +1078,7 @@ Missing behavior.
                     "gpt-5.6-terra",
                     str(contract),
                 ],
+                ["--critique", "--quiet", str(contract)],
                 [
                     "--critique-reasoning-efforts",
                     "low,medium",
@@ -976,6 +1094,7 @@ Missing behavior.
                     "gpt-5.6-terra",
                     str(contract),
                 ],
+                ["--quiet", str(contract)],
             ]
 
             for arguments in argument_sets:

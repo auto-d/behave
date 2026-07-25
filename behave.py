@@ -618,10 +618,6 @@ def validate_critique_fragment(
         problem = problem_match.group("problem")
         if len(problem) > 240:
             raise ValueError("Problem field exceeds 240 characters")
-        if problem[-1] not in ".!?" or sum(
-            character in ".!?" for character in problem
-        ) != 1:
-            raise ValueError("Problem field must contain exactly one sentence")
         if RECOMMENDATION_RE.search(problem):
             raise ValueError("Problem field contains recommendation language")
 
@@ -768,10 +764,17 @@ def generate_critique_report(
     prompt: str,
     protocol: str,
     api_key: str,
+    requirement_id: str | None = None,
 ) -> tuple[str, list[str]]:
     """Generate a report and return any per-requirement failure diagnostics."""
     instructions = critique_instructions(prompt, protocol)
     summaries = requirement_summaries(path, text)
+    if requirement_id is not None:
+        summaries = [
+            summary
+            for summary in summaries
+            if summary.identifier == requirement_id
+        ]
     fragments: list[str] = []
     failures: list[str] = []
 
@@ -1143,6 +1146,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="critique Evaluate clauses for one valid specification",
     )
+    parser.add_argument(
+        "--critique-requirement",
+        metavar="R-ID",
+        help="with --critique, critique only one requirement by exact ID",
+    )
     return parser
 
 
@@ -1159,7 +1167,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             parser.error("--critique cannot be combined with --json")
         if args.check_references or args.check_external_references:
             parser.error("--critique cannot be combined with reference checks")
+        if (
+            args.critique_requirement
+            and not REQUIREMENT_ID_RE.fullmatch(args.critique_requirement)
+        ):
+            parser.error(
+                "--critique-requirement expects an identifier such as R-EXAMPLE"
+            )
+    elif args.critique_requirement:
+        parser.error("--critique-requirement requires --critique")
 
+    if args.critique:
         path = args.paths[0]
         try:
             text = path.read_text(encoding="utf-8")
@@ -1180,6 +1198,29 @@ def main(argv: Sequence[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 1
+
+        if args.critique_requirement:
+            matches = requirement_excerpts(
+                path,
+                text,
+                args.critique_requirement,
+            )
+            if len(matches) > 1:
+                print(
+                    f"{path}:{matches[1].line}: R002: "
+                    f"duplicate requirement identifier "
+                    f"{args.critique_requirement}; critique target is "
+                    "ambiguous",
+                    file=sys.stderr,
+                )
+                return 1
+            if not matches:
+                print(
+                    f"{path}:1: R005: requirement "
+                    f"{args.critique_requirement} was not found",
+                    file=sys.stderr,
+                )
+                return 1
 
         try:
             prompt = CRITIQUE_PROMPT_PATH.read_text(encoding="utf-8")
@@ -1218,6 +1259,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             prompt,
             protocol,
             api_key,
+            args.critique_requirement,
         )
         sys.stdout.write(report)
         for failure in failures:

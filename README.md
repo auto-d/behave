@@ -239,6 +239,12 @@ time to `gpt-5.6-sol` with high reasoning. It does not retrieve the contents of
 documents named in `References`; the requirement and its references remain
 authoritative as written.
 
+To critique only one requirement while iterating, pass its exact identifier:
+
+```sh
+$ python3 behave.py --critique --critique-requirement R-EXAMPLE behavior.md
+```
+
 A report with no findings looks like:
 
 ```md

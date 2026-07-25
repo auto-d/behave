@@ -63,8 +63,7 @@ Rules:
 - Return all material findings, numbered sequentially from 1.
 - Use the exact requirement ID supplied in the input.
 - Target only a behavior or Evaluate clause that exists in the requirement.
-- Each Problem is one sentence, no more than 240 characters, and ends with
-  `.`, `?`, or `!`.
+- Each Problem is concise and no more than 240 characters.
 - Do not use recommendation language in a Problem.
 - Do not return a title, summary, praise, quotations, scores, confidence,
   reasoning, revisions, code fences, or any other prose.

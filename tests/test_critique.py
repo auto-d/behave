@@ -155,10 +155,6 @@ class CritiqueValidationTests(unittest.TestCase):
                 + ("x" * 240)
                 + "."
             ),
-            "two sentences": (
-                "## R-FIRST\n\n### Finding 1: B1.E1\n\n"
-                "**Problem:** One issue exists. Another issue exists."
-            ),
             "recommendation": (
                 "## R-FIRST\n\n### Finding 1: B1.E1\n\n"
                 "**Problem:** Add a criterion covering unavailable sources."
@@ -177,6 +173,22 @@ class CritiqueValidationTests(unittest.TestCase):
                         fragment,
                         {"B1", "B1.E1"},
                     )
+
+    def test_problem_allows_target_references_and_multiple_periods(self) -> None:
+        fragment = """## R-FIRST
+
+### Finding 1: B1.E1
+
+**Problem:** B1.E1 permits v2.1 evidence, e.g. partial traces, without establishing complete coverage."""
+
+        self.assertEqual(
+            fragment,
+            behave.validate_critique_fragment(
+                "R-FIRST",
+                fragment,
+                {"B1", "B1.E1"},
+            ),
+        )
 
 
 class CritiqueRequestTests(unittest.TestCase):
@@ -351,6 +363,33 @@ class CritiqueReportTests(unittest.TestCase):
         self.assertIn("> Model: `gpt-5.6-sol`", report)
         self.assertIn("> Reasoning effort: `high`", report)
 
+    def test_report_can_target_one_requirement(self) -> None:
+        identifiers: list[str] = []
+
+        def respond(
+            api_key: str,
+            instructions: str,
+            requirement: behave.RequirementExcerpt,
+            timeout: float = behave.CRITIQUE_TIMEOUT,
+        ) -> str:
+            identifiers.append(requirement.identifier)
+            return no_findings(requirement.identifier)
+
+        with mock.patch("behave.request_critique", side_effect=respond):
+            report, failures = behave.generate_critique_report(
+                Path("contract.md"),
+                TWO_REQUIREMENTS,
+                "prompt\n",
+                "protocol\n",
+                "secret-key",
+                "R-SECOND",
+            )
+
+        self.assertEqual(["R-SECOND"], identifiers)
+        self.assertEqual([], failures)
+        self.assertNotIn("## R-FIRST", report)
+        self.assertIn("## R-SECOND", report)
+
     def test_report_continues_after_request_and_template_failures(self) -> None:
         with mock.patch(
             "behave.request_critique",
@@ -455,6 +494,57 @@ Missing behavior.
         self.assertEqual(complete_report, output.getvalue())
         self.assertEqual("", error.getvalue())
 
+    def test_cli_passes_target_requirement_to_report_generator(self) -> None:
+        complete_report = "# Behave evaluability critique\n\n## R-SECOND\n"
+        with tempfile.TemporaryDirectory() as directory:
+            contract = Path(directory) / "contract.md"
+            contract.write_text(TWO_REQUIREMENTS, encoding="utf-8")
+            output = io.StringIO()
+
+            with mock.patch(
+                "behave.load_openai_api_key",
+                return_value="secret-key",
+            ), mock.patch(
+                "behave.generate_critique_report",
+                return_value=(complete_report, []),
+            ) as mocked_report, redirect_stdout(output):
+                status = behave.main(
+                    [
+                        "--critique",
+                        "--critique-requirement",
+                        "R-SECOND",
+                        str(contract),
+                    ]
+                )
+
+        self.assertEqual(0, status)
+        self.assertEqual(complete_report, output.getvalue())
+        self.assertEqual("R-SECOND", mocked_report.call_args.args[5])
+
+    def test_cli_rejects_missing_target_requirement_before_credentials(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            contract = Path(directory) / "contract.md"
+            contract.write_text(ONE_REQUIREMENT, encoding="utf-8")
+            output = io.StringIO()
+            error = io.StringIO()
+
+            with mock.patch(
+                "behave.load_openai_api_key"
+            ) as mocked_key, redirect_stdout(output), redirect_stderr(error):
+                status = behave.main(
+                    [
+                        "--critique",
+                        "--critique-requirement",
+                        "R-MISSING",
+                        str(contract),
+                    ]
+                )
+
+        self.assertEqual(1, status)
+        self.assertEqual("", output.getvalue())
+        self.assertIn("R-MISSING", error.getvalue())
+        mocked_key.assert_not_called()
+
     def test_cli_emits_partial_report_and_returns_nonzero(self) -> None:
         partial_report = "# Behave evaluability critique\n\n## R-FIRST\n"
         with tempfile.TemporaryDirectory() as directory:
@@ -492,6 +582,13 @@ Missing behavior.
                     str(contract),
                 ],
                 ["--critique", "--scoresheet", str(contract)],
+                ["--critique-requirement", "R-FIRST", str(contract)],
+                [
+                    "--critique",
+                    "--critique-requirement",
+                    "not-valid",
+                    str(contract),
+                ],
             ]
 
             for arguments in argument_sets:

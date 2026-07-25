@@ -1,35 +1,38 @@
 # Behave
 
-This project introduces Behave, a repository-native Markdown contract and companion tool that capture a system's intended external behavior and evaluation criteria.
+Behave is a repository-native Markdown contract and companion tool for
+capturing a system's intended external behavior and the criteria used to judge
+it.
 
-Behave keeps governing intent available to humans, coding agents, implementations,and evaluators instead of allowing tests or conversation history to become lossy proxies for the original design.
+It keeps governing intent available to humans, coding agents, implementations,
+and evaluators instead of allowing tests or conversation history to become
+lossy proxies for the original design.
 
 > **Status:** Early draft. The structure is usable, but the protocol may evolve.
 
-## Background
+[PROTOCOL.md](PROTOCOL.md) is the authoritative definition of the specification
+language. This README is the user guide.
 
-Coding agents have substantially reduced the cost of implementing a design, but they have not reduced the need to specify one. When intent is incomplete, an agent can produce many plausible implementations—including implementations that satisfy narrow tests while violating the system's broader purpose.
+## Why Behave
 
-Traditional requirements often become progressively separated from implementation and evaluation:
+Coding agents have substantially reduced the cost of implementing a design, but
+they have not reduced the need to specify one. When intent is incomplete, an
+agent can produce many plausible implementations—including implementations
+that satisfy narrow tests while violating the system's broader purpose.
 
-requirements
-→ derived requirements
-→ implementation
-→ tests
-→ release
+Traditional requirements often become progressively separated from
+implementation and evaluation:
 
-Over time, tests and implementation details may become operational proxies for the original design, while important intent remains distributed across conversations, source code, documentation, and issue history.
+requirements → derived requirements → implementation → tests → release
 
-A Behave specification keeps that intent explicit and active throughout the system lifecycle. It serves as:
-- the design contract between the operator and the implementation
-- the governing behavioral reference for coding agents
-- the basis for determining whether implementation is complete
-- the anchor for implementation-appropriate evaluation 
-- a traceable source of intent for downstream tests and evaluation results
+Over time, tests and implementation details can become proxies for the original
+design, while important intent remains distributed across conversations, source
+code, documentation, and issue history.
 
-The protocol describes behavior, not implementation. It defines what the system must do and how satisfaction will be determined without prescribing the architecture, algorithms, tools, or programming languages used to achieve it.
-
-A conforming Behave specification remains readable as ordinary repository-native Markdown while providing enough structure for tooling to enumerate behaviors, verify that each has an evaluation path, and associate implementation and evaluation artifacts with the intent they are meant to satisfy.
+A Behave specification keeps that intent explicit and active. It is readable as
+ordinary Markdown while giving tools enough structure to enumerate behaviors,
+verify that each has an evaluation path, and associate evidence with the intent
+it supports.
 
 ## Quick start
 
@@ -40,8 +43,8 @@ python3 behave.py example.md
 python3 -m unittest
 ```
 
-To adopt the protocol, copy `behave.py` into your repository, create a
-behavior specification, and run:
+To adopt Behave, copy both `PROTOCOL.md` and `behave.py` into your repository,
+create a behavior specification, and run:
 
 ```sh
 python3 behave.py path/to/behavior.md
@@ -50,7 +53,7 @@ python3 behave.py path/to/behavior.md
 The command-line tool uses only the Python standard library.
 
 See [example.md](example.md) for a worked contract covering multiple
-requirements, behaviors, and evaluation methods.
+requirements, behaviors, and evaluation criteria.
 
 ## A small, illustrative, and valid specification
 
@@ -76,8 +79,10 @@ A requirement has a stable `R-UPPERCASE-ID` and four recognized sections:
 - `#### Rationale` — optional, at most once.
 - `#### References` — optional, at most once.
 
-The protocol constrains what the system must do and how satisfaction will be determined. It does not prescribe architecture, algorithms, tools, programming
-languages, or internal reasoning.
+The protocol constrains what the system must do and how satisfaction will be
+judged. It does not prescribe architecture, algorithms, tools, programming
+languages, or internal reasoning. See [PROTOCOL.md](PROTOCOL.md) for the
+complete language rules.
 
 ## Behaviors
 
@@ -87,9 +92,9 @@ The `Behavior` section expresses each behavior as a top-level bullet. Every beha
 
 ## Evaluations
 
-An `Evaluate` clause says what must be true for its behavior to count as
-satisfied. Together, the clauses beneath a behavior form its evaluation
-checklist.
+An `Evaluate` clause is one criterion saying what must be true for its behavior
+to count as satisfied. Together, the clauses beneath a behavior form its
+evaluation checklist.
 
 Each clause should make clear what the evidence needs to show. It may name
 facts, comparisons, thresholds, coverage, or an observation period, but it
@@ -106,7 +111,10 @@ Optional bracket annotations are opaque, experimental hints:
 - Evaluate [evidence=latency measurements]: p95 latency remains below 500 ms over a representative measurement period.
 ```
 
-Annotations may help implementations discover likely evidence sources, but they are non-normative and may evolve. A criterion must remain understandable without them. The tool accepts annotation contents without interpreting or restricting them.
+Annotations may help implementations discover likely evidence sources, but
+they are non-normative and may evolve. A criterion must remain understandable
+without them. The tool accepts annotation contents without interpreting or
+restricting them.
 
 ## Using `behave.py`
 
@@ -202,9 +210,9 @@ such as test results, measurements, reports, screenshots, or session captures.
 Scoresheets are deterministic and written to standard output. They do not
 assign scores or statuses, interpret evidence, or prescribe artifact formats.
 
-The tool does not execute evaluations, bind them to tests, inspect evidence,
-interpret annotation hints, or determine whether an implementation actually
-conforms.
+The tool checks document structure. It does not execute evaluations, bind them
+to tests, inspect evidence, interpret annotation hints, or determine whether an
+implementation actually conforms.
 
 ## Maintenance
 
@@ -227,17 +235,22 @@ Repositories adopting the protocol can add the following to `AGENTS.md`, `CLAUDE
 ```md
 ## Behavioral specification workflow
 
-This project follows the Behave protocol:
+This project follows the Behave protocol. Its authoritative language
+definition is vendored at:
 
-    https://raw.githubusercontent.com/auto-d/behave/main/README.md
+    <path-to-protocol>
 
-The reference command-line tool is available at:
+The upstream protocol is available at:
 
-    https://raw.githubusercontent.com/auto-d/behave/main/behave.py
+    https://raw.githubusercontent.com/auto-d/behave/main/PROTOCOL.md
 
-This repository vendors that tool at:
+The reference command-line tool is vendored at:
 
     <path-to-behave>
+
+The upstream tool is available at:
+
+    https://raw.githubusercontent.com/auto-d/behave/main/behave.py
 
 The authoritative Behave behavioral specification for this project is:
 
@@ -254,9 +267,13 @@ List and inspect requirements with:
 
 Treat the specification as the authoritative description of intended external behavior. When user intent introduces, changes, or contradicts behavior, update the specification before considering the related implementation complete.
 
-Every behavior must declare at least one evaluation. After changing the specification, run the validator and resolve all conformance errors. Update the implementation and evaluators, then run the applicable checks.
+Every behavior must declare at least one evaluation. After changing the specification, run the validator and resolve all validation errors. Update the implementation and evaluators, then run the applicable checks.
 
 Do not leave material intent only in conversation, code, tests, issues, or implementation notes. Do not weaken intended behavior to accommodate an existing implementation without explicit user or operator approval.
+
+When updating the vendored Behave protocol or tool, keep them synchronized with
+their upstream sources. The protocol is authoritative when explanatory
+documentation and the tool disagree.
 ```
 
 ## Project status

@@ -2,22 +2,9 @@
 """
 Work with Behave Markdown specifications.
 
-Current protocol rules enforced:
-
-1. The document contains at least one requirement heading:
-       ### R-STABLE-IDENTIFIER
-2. Requirement identifiers are unique.
-3. Each requirement contains exactly one `#### Intent` and `#### Behavior`.
-4. Optional `#### Rationale` and `#### References` sections occur at most once.
-5. Unknown level-four requirement sections are rejected.
-6. Content inside a requirement belongs to a recognized section.
-7. A `#### Behavior` section contains at least one behavior bullet.
-8. Every behavior bullet contains at least one immediate child `Evaluate` clause.
-9. Every `Evaluate` clause contains a non-empty evaluation statement.
-10. Optionally, targets in `References` sections are fetchable or exist locally.
-
-Annotation hints are accepted without interpretation. This intentionally does
-not validate evidence, rubrics, tests, scenarios, or implementation conformance.
+PROTOCOL.md is the authoritative definition of the Behave specification
+language. This tool implements its structural validation rules and optional
+reference checks; it does not determine behavioral conformance.
 
 The tool can also derive a Markdown scoresheet that preserves a specification
 and adds an evidence-links area beneath each evaluation criterion.

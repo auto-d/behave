@@ -10,6 +10,9 @@ from pathlib import Path
 import behave
 
 
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+
+
 def specification(body: str) -> str:
     return f"""# Contract
 
@@ -183,6 +186,44 @@ It should work.
         text = requirement + "\n" + requirement
 
         self.assertIn("R002", codes(text))
+
+
+class ProtocolLinkageTests(unittest.TestCase):
+    def test_protocol_is_the_documented_language_authority(self) -> None:
+        protocol = (REPOSITORY_ROOT / "PROTOCOL.md").read_text(encoding="utf-8")
+        readme = (REPOSITORY_ROOT / "README.md").read_text(encoding="utf-8")
+        normalized_protocol = " ".join(protocol.split())
+
+        self.assertIn(
+            "authoritative definition of the Behave specification language",
+            normalized_protocol,
+        )
+        self.assertIn("[PROTOCOL.md](PROTOCOL.md)", readme)
+        self.assertIn(
+            "https://raw.githubusercontent.com/auto-d/behave/main/PROTOCOL.md",
+            readme,
+        )
+
+    def test_tool_and_agent_instructions_point_to_protocol(self) -> None:
+        instructions = (REPOSITORY_ROOT / "AGENTS.md").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("PROTOCOL.md", behave.__doc__ or "")
+        self.assertNotIn("Current protocol rules enforced", behave.__doc__ or "")
+        self.assertIn(
+            "`PROTOCOL.md` is the authoritative definition",
+            instructions,
+        )
+        self.assertIn(
+            "`behave.py` implements the structural rules in `PROTOCOL.md`",
+            instructions,
+        )
+
+    def test_worked_example_conforms_to_protocol_structure(self) -> None:
+        example = REPOSITORY_ROOT / "example.md"
+
+        self.assertEqual([], behave.validate_file(example))
 
 
 class BehaviorValidationTests(unittest.TestCase):

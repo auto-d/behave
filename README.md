@@ -179,7 +179,7 @@ query for structured output.
 
 ### Check references
 
-Local and HTTP reference checks are opt-in:
+External references help keep your behavior specifications compact, but can introduce new sources of instability. Local and HTTP reference checks are supported but are opt-in:
 
 ```sh
 $ python3 behave.py --check-references behavior.md
@@ -193,7 +193,7 @@ per request. External checks require network access.
 
 ### Generate a scoresheet
 
-Generate a Markdown scoresheet from one valid specification:
+Divorcing the behavior specification from implementation allows the analysis of one or more implementations against the stated evaluation criteria. At present, the document that conveys an implementations conformance (or lack of) is the *scoresheet*. To generate a Markdown scoresheet from one valid specification:
 
 ```sh
 $ python3 behave.py --scoresheet behavior.md > scoresheet.md
@@ -229,6 +229,8 @@ implementation actually conforms.
 
 ### Critique evaluability
 
+Behave will attempt to identify weaknesses in your specification's evaluation criteria, provided an API key. 
+
 Request an advisory semantic critique of the Evaluate clauses in one valid
 specification:
 
@@ -255,8 +257,8 @@ To critique only one requirement while iterating, pass its exact identifier:
 $ python3 behave.py --critique --critique-requirement R-EXAMPLE behavior.md
 ```
 
-To compare latency, token cost, and diagnostic quality, override the reasoning
-effort for a run:
+### Critic tuning
+To compare latency, token cost, and diagnostic quality across reasoning levels, override the reasoning effort for a run:
 
 ```sh
 $ python3 behave.py --critique --critique-requirement R-EXAMPLE --critique-reasoning-effort low behavior.md
@@ -281,12 +283,10 @@ $ python3 behave.py --critique-reasoning-eval R-EXAMPLE --critique-reasoning-eff
 
 The output is a Markdown table:
 
-```md
 | Effort | Findings | Critique latency | Critique reasoning tokens | Critique total tokens | Score | Score latency | Score total tokens | Note |
 |---|---:|---:|---:|---:|---:|---:|---:|---|
 | `low` | 4 | 7.1s | 366 | 2,843 | 8.0 | 6.4s | 2,410 | Finds the main material gaps with concise wording. |
 | `medium` | 4 | 11.7s | 516 | 3,002 | 8.5 | 6.8s | 2,438 | Same coverage as low with slightly sharper precision. |
-```
 
 The table uses a ten-point rubric: material coverage is worth four points,
 precision three, diagnostic usefulness two, and contract cleanliness one.
@@ -299,6 +299,7 @@ effort label, cost metadata, or other effort outputs.
 A report with no findings looks like:
 
 ```md
+
 # Behave evaluability critique
 
 > Source specification: `behavior.md`

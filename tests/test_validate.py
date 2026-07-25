@@ -208,6 +208,11 @@ class ProtocolLinkageTests(unittest.TestCase):
         instructions = (REPOSITORY_ROOT / "AGENTS.md").read_text(
             encoding="utf-8"
         )
+        readme = (REPOSITORY_ROOT / "README.md").read_text(encoding="utf-8")
+        prompt = (REPOSITORY_ROOT / "CRITIQUE_PROMPT.md").read_text(
+            encoding="utf-8"
+        )
+        normalized_prompt = " ".join(prompt.split())
 
         self.assertIn("PROTOCOL.md", behave.__doc__ or "")
         self.assertNotIn("Current protocol rules enforced", behave.__doc__ or "")
@@ -218,6 +223,12 @@ class ProtocolLinkageTests(unittest.TestCase):
         self.assertIn(
             "`behave.py` implements the structural rules in `PROTOCOL.md`",
             instructions,
+        )
+        self.assertIn("`CRITIQUE_PROMPT.md` defines", instructions)
+        self.assertIn("CRITIQUE_PROMPT.md", readme)
+        self.assertIn(
+            "Do not propose fixes, revisions, replacement wording",
+            normalized_prompt,
         )
 
     def test_worked_example_conforms_to_protocol_structure(self) -> None:

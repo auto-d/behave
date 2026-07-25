@@ -43,7 +43,7 @@ python3 behave.py example.md
 python3 -m unittest
 ```
 
-To adopt Behave, copy both `PROTOCOL.md` and `behave.py` into your repository,
+To adopt Behave, copy `PROTOCOL.md` and `behave.py` into your repository,
 create a behavior specification, and run:
 
 ```sh
@@ -54,6 +54,9 @@ The command-line tool uses only the Python standard library.
 
 See [example.md](example.md) for a worked contract covering multiple
 requirements, behaviors, and evaluation criteria.
+
+The optional LLM critique mode also requires `CRITIQUE_PROMPT.md` beside
+`behave.py`.
 
 ## A small, illustrative, and valid specification
 
@@ -214,6 +217,64 @@ The tool checks document structure. It does not execute evaluations, bind them
 to tests, inspect evidence, interpret annotation hints, or determine whether an
 implementation actually conforms.
 
+### Critique evaluability
+
+Request an advisory semantic critique of the Evaluate clauses in one valid
+specification:
+
+```sh
+$ python3 behave.py --critique behavior.md > critique.md
+```
+
+The command uses `OPENAI_API_KEY` from the environment, falling back to
+`./.env` in the directory where the command is run. The `.env` file should
+contain:
+
+```text
+OPENAI_API_KEY=...
+```
+
+Critique mode sends the complete local `PROTOCOL.md` and one requirement at a
+time to `gpt-5.6-sol` with high reasoning. It does not retrieve the contents of
+documents named in `References`; the requirement and its references remain
+authoritative as written.
+
+A report with no findings looks like:
+
+```md
+# Behave evaluability critique
+
+> Source specification: `behavior.md`
+> Model: `gpt-5.6-sol`
+> Reasoning effort: `high`
+
+## R-EXAMPLE
+
+_No material evaluability issues identified._
+```
+
+A material issue is tied to its behavior or Evaluate clause using document
+order:
+
+```md
+## R-EXAMPLE
+
+### Finding 1: B1.E2
+
+**Problem:** The criterion cannot distinguish a satisfying explanation from one that conflicts with the reported status.
+```
+
+Findings are diagnostic only. The critic does not propose revisions,
+replacement wording, thresholds, policies, or evidence-collection methods.
+“No material evaluability issues identified” is advisory and is not a
+pass/fail declaration.
+
+Each model response is checked against a strict Markdown template. If a request
+fails or its response is malformed, the report contains an explicit
+`Critique unavailable` section for that requirement, processing continues, and
+the command exits nonzero. Invalid specifications or missing critique
+configuration fail before a report is written.
+
 ## Maintenance
 
 A specification that does not change with the user's intent becomes a precise description of the wrong system.
@@ -252,6 +313,14 @@ The upstream tool is available at:
 
     https://raw.githubusercontent.com/auto-d/behave/main/behave.py
 
+To use LLM critique, vendor the critic prompt beside the tool:
+
+    <path-containing-behave>/CRITIQUE_PROMPT.md
+
+The upstream critic prompt is available at:
+
+    https://raw.githubusercontent.com/auto-d/behave/main/CRITIQUE_PROMPT.md
+
 The authoritative Behave behavioral specification for this project is:
 
     <path-to-project-specification>
@@ -272,8 +341,9 @@ Every behavior must declare at least one evaluation. After changing the specific
 Do not leave material intent only in conversation, code, tests, issues, or implementation notes. Do not weaken intended behavior to accommodate an existing implementation without explicit user or operator approval.
 
 When updating the vendored Behave protocol or tool, keep them synchronized with
-their upstream sources. The protocol is authoritative when explanatory
-documentation and the tool disagree.
+their upstream sources. Keep `CRITIQUE_PROMPT.md` synchronized when critique
+mode is used. The protocol is authoritative when explanatory documentation and
+the tool disagree.
 ```
 
 ## Project status

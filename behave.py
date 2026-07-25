@@ -7,13 +7,15 @@ language. This tool implements its structural validation rules and optional
 reference checks; it does not determine behavioral conformance.
 
 The tool can also derive a Markdown scoresheet that preserves a specification
-and adds an evidence-links area beneath each evaluation criterion.
+and adds an evidence-links area beneath each evaluation criterion, or request
+an advisory LLM critique of criteria evaluability.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from dataclasses import asdict, dataclass, field
@@ -43,6 +45,34 @@ EVALUATE_RE = re.compile(
 EXTERNAL_REFERENCE_RE = re.compile(r"""https?://[^\s<>()\[\]`"']+""")
 MARKDOWN_LINK_RE = re.compile(r"\[[^\]]*\]\((?P<target>[^)]+)\)")
 BACKTICK_REFERENCE_RE = re.compile(r"`(?P<target>[^`]+)`")
+CRITIQUE_FINDING_RE = re.compile(
+    r"^### Finding (?P<number>[1-9][0-9]*): "
+    r"(?P<target>B[1-9][0-9]*(?:\.E[1-9][0-9]*)?)$"
+)
+CRITIQUE_PROBLEM_RE = re.compile(
+    r"^\*\*Problem:\*\* (?P<problem>\S(?:.*\S)?)$"
+)
+RECOMMENDATION_RE = re.compile(
+    r"^(?:add|revise|rewrite|clarify|change|replace|remove|define|specify|"
+    r"include|require)\b|\b(?:should|ought to|needs to|recommend(?:s|ed)?)\b",
+    re.IGNORECASE,
+)
+
+TOOL_DIRECTORY = Path(__file__).resolve().parent
+PROTOCOL_PATH = TOOL_DIRECTORY / "PROTOCOL.md"
+CRITIQUE_PROMPT_PATH = TOOL_DIRECTORY / "CRITIQUE_PROMPT.md"
+OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
+CRITIQUE_MODEL = "gpt-5.6-sol"
+CRITIQUE_TIMEOUT = 120.0
+CRITIQUE_MAX_OUTPUT_TOKENS = 2048
+NO_FINDINGS_TEXT = "_No material evaluability issues identified._"
+UNUSABLE_RESPONSE_TEXT = (
+    "_Critique unavailable because the model did not return a usable response._"
+)
+MALFORMED_RESPONSE_TEXT = (
+    "_Critique unavailable because the model response did not conform to the "
+    "required Markdown template._"
+)
 
 @dataclass(frozen=True)
 class Diagnostic:
@@ -104,6 +134,10 @@ class RequirementSummary:
     identifier: str
     path: str
     line: int
+
+
+class CritiqueError(Exception):
+    """Raised when a critique request cannot produce usable model text."""
 
 
 def indentation_width(value: str) -> int:
@@ -498,6 +532,308 @@ def requirement_summaries(
     return summaries
 
 
+def critique_targets(requirement_markdown: str) -> set[str]:
+    """Return behavior and Evaluate document-order targets for a requirement."""
+    targets: set[str] = set()
+    current_section: str | None = None
+    behavior_indent: int | None = None
+    behavior_number = 0
+    evaluation_number = 0
+
+    for raw in requirement_markdown.splitlines():
+        section_match = SECTION_RE.match(raw)
+        if section_match:
+            current_section = section_match.group(1)
+            behavior_indent = None
+            continue
+
+        if current_section != "Behavior":
+            continue
+
+        item = LIST_ITEM_RE.match(raw)
+        if not item:
+            continue
+
+        indent = indentation_width(item.group("indent"))
+        item_text = item.group("text").strip()
+
+        if behavior_indent is None:
+            behavior_indent = indent
+
+        if indent == behavior_indent:
+            behavior_number += 1
+            evaluation_number = 0
+            targets.add(f"B{behavior_number}")
+        elif EVALUATE_RE.match(item_text):
+            evaluation_number += 1
+            targets.add(f"B{behavior_number}.E{evaluation_number}")
+
+    return targets
+
+
+def validate_critique_fragment(
+    identifier: str,
+    fragment: str,
+    targets: set[str],
+) -> str:
+    """
+    Return normalized model Markdown or raise ValueError when it does not match
+    the critique output contract.
+    """
+    normalized = fragment.replace("\r\n", "\n").replace("\r", "\n").strip()
+    lines = normalized.split("\n")
+    expected_heading = f"## {identifier}"
+
+    if len(lines) < 3 or lines[0] != expected_heading or lines[1] != "":
+        raise ValueError("response must begin with the exact requirement heading")
+
+    if lines[2] == NO_FINDINGS_TEXT:
+        if len(lines) != 3:
+            raise ValueError("no-findings response contains additional content")
+        return normalized
+
+    finding_number = 1
+    index = 2
+
+    while index < len(lines):
+        if finding_number > 3:
+            raise ValueError("response contains more than three findings")
+
+        heading_match = CRITIQUE_FINDING_RE.fullmatch(lines[index])
+        if not heading_match:
+            raise ValueError("finding heading is malformed")
+
+        actual_number = int(heading_match.group("number"))
+        if actual_number != finding_number:
+            raise ValueError("finding numbers must be sequential")
+
+        target = heading_match.group("target")
+        if target not in targets:
+            raise ValueError(f"finding target does not exist: {target}")
+
+        if index + 2 >= len(lines) or lines[index + 1] != "":
+            raise ValueError("finding must contain one Problem field")
+
+        problem_match = CRITIQUE_PROBLEM_RE.fullmatch(lines[index + 2])
+        if not problem_match:
+            raise ValueError("Problem field is malformed")
+
+        problem = problem_match.group("problem")
+        if len(problem) > 240:
+            raise ValueError("Problem field exceeds 240 characters")
+        if problem[-1] not in ".!?" or sum(
+            character in ".!?" for character in problem
+        ) != 1:
+            raise ValueError("Problem field must contain exactly one sentence")
+        if RECOMMENDATION_RE.search(problem):
+            raise ValueError("Problem field contains recommendation language")
+
+        index += 3
+        finding_number += 1
+        if index < len(lines):
+            if lines[index] != "":
+                raise ValueError("findings must be separated by one blank line")
+            index += 1
+
+    return normalized
+
+
+def load_openai_api_key(
+    environment: dict[str, str] | None = None,
+    dotenv_path: Path | None = None,
+) -> str | None:
+    """Resolve OPENAI_API_KEY from the environment, then a local .env file."""
+    values = os.environ if environment is None else environment
+    environment_value = values.get("OPENAI_API_KEY", "").strip()
+    if environment_value:
+        return environment_value
+
+    path = Path(".env") if dotenv_path is None else dotenv_path
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        return None
+
+    for raw in lines:
+        line = raw.strip()
+        if line.startswith("export "):
+            line = line[7:].lstrip()
+        if not line.startswith("OPENAI_API_KEY="):
+            continue
+
+        value = line.split("=", 1)[1].strip()
+        if (
+            len(value) >= 2
+            and value[0] == value[-1]
+            and value[0] in {'"', "'"}
+        ):
+            value = value[1:-1]
+        return value or None
+
+    return None
+
+
+def critique_instructions(prompt: str, protocol: str) -> str:
+    """Combine the fixed critic prompt with the verbatim Behave protocol."""
+    return (
+        f"{prompt}\n"
+        "<behave_protocol>\n"
+        f"{protocol}"
+        "</behave_protocol>"
+    )
+
+
+def request_critique(
+    api_key: str,
+    instructions: str,
+    requirement: RequirementExcerpt,
+    timeout: float = CRITIQUE_TIMEOUT,
+) -> str:
+    """Request one requirement critique through the OpenAI Responses API."""
+    input_payload = json.dumps(
+        {
+            "requirement_id": requirement.identifier,
+            "requirement_markdown": requirement.markdown,
+        },
+        ensure_ascii=False,
+    )
+    request_payload = {
+        "model": CRITIQUE_MODEL,
+        "instructions": instructions,
+        "input": input_payload,
+        "reasoning": {"effort": "high"},
+        "text": {"verbosity": "low"},
+        "store": False,
+        "max_output_tokens": CRITIQUE_MAX_OUTPUT_TOKENS,
+    }
+    request = Request(
+        OPENAI_RESPONSES_URL,
+        data=json.dumps(request_payload, ensure_ascii=False).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "User-Agent": "behave-critique/1",
+        },
+        method="POST",
+    )
+
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            response_payload = json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        raise CritiqueError(f"OpenAI API returned HTTP {exc.code}") from exc
+    except URLError as exc:
+        raise CritiqueError(f"OpenAI API request failed: {exc.reason}") from exc
+    except TimeoutError as exc:
+        raise CritiqueError("OpenAI API request timed out") from exc
+    except OSError as exc:
+        raise CritiqueError(f"OpenAI API request failed: {exc}") from exc
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise CritiqueError("OpenAI API returned malformed JSON") from exc
+
+    if not isinstance(response_payload, dict):
+        raise CritiqueError("OpenAI API returned an unexpected response")
+    if response_payload.get("status") != "completed":
+        raise CritiqueError("OpenAI API response was not completed")
+
+    output_text: list[str] = []
+    output = response_payload.get("output")
+    if not isinstance(output, list):
+        raise CritiqueError("OpenAI API response contained no output")
+
+    for item in output:
+        if not isinstance(item, dict) or item.get("type") != "message":
+            continue
+        content = item.get("content")
+        if not isinstance(content, list):
+            continue
+        for part in content:
+            if (
+                isinstance(part, dict)
+                and part.get("type") == "output_text"
+                and isinstance(part.get("text"), str)
+            ):
+                output_text.append(part["text"])
+
+    combined = "".join(output_text)
+    if not combined.strip():
+        raise CritiqueError("OpenAI API response contained no output text")
+    return combined
+
+
+def unavailable_critique_fragment(identifier: str, message: str) -> str:
+    return f"## {identifier}\n\n{message}"
+
+
+def generate_critique_report(
+    path: Path,
+    text: str,
+    prompt: str,
+    protocol: str,
+    api_key: str,
+) -> tuple[str, list[str]]:
+    """Generate a report and return any per-requirement failure diagnostics."""
+    instructions = critique_instructions(prompt, protocol)
+    summaries = requirement_summaries(path, text)
+    fragments: list[str] = []
+    failures: list[str] = []
+
+    for summary in summaries:
+        requirement = requirement_excerpts(
+            path,
+            text,
+            summary.identifier,
+        )[0]
+        try:
+            model_fragment = request_critique(
+                api_key,
+                instructions,
+                requirement,
+            )
+        except CritiqueError as exc:
+            failures.append(f"{summary.identifier}: {exc}")
+            fragments.append(
+                unavailable_critique_fragment(
+                    summary.identifier,
+                    UNUSABLE_RESPONSE_TEXT,
+                )
+            )
+            continue
+
+        try:
+            accepted_fragment = validate_critique_fragment(
+                summary.identifier,
+                model_fragment,
+                critique_targets(requirement.markdown),
+            )
+        except ValueError as exc:
+            failures.append(
+                f"{summary.identifier}: model response was malformed: {exc}"
+            )
+            fragments.append(
+                unavailable_critique_fragment(
+                    summary.identifier,
+                    MALFORMED_RESPONSE_TEXT,
+                )
+            )
+            continue
+
+        fragments.append(accepted_fragment)
+
+    escaped_path = str(path).replace("`", "\\`")
+    header = "\n".join(
+        [
+            "# Behave evaluability critique",
+            "",
+            f"> Source specification: `{escaped_path}`",
+            f"> Model: `{CRITIQUE_MODEL}`",
+            "> Reasoning effort: `high`",
+        ]
+    )
+    report = header + "\n\n" + "\n\n".join(fragments) + "\n"
+    return report, failures
+
+
 def evaluation_locations(
     text: str,
 ) -> list[tuple[int, int, str, str]]:
@@ -805,12 +1141,91 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="print an evidence-link scoresheet for one valid specification",
     )
+    query_group.add_argument(
+        "--critique",
+        action="store_true",
+        help="critique Evaluate clauses for one valid specification",
+    )
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    if args.critique:
+        if len(args.paths) != 1 or args.paths[0].is_dir():
+            parser.error(
+                "critique generation requires exactly one Markdown file"
+            )
+        if args.json:
+            parser.error("--critique cannot be combined with --json")
+        if args.check_references or args.check_external_references:
+            parser.error("--critique cannot be combined with reference checks")
+
+        path = args.paths[0]
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            print(
+                f"{path}:1: IO001: could not read file: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+
+        diagnostics = validate_text(path, text)
+        if diagnostics:
+            for item in diagnostics:
+                print(item.render(), file=sys.stderr)
+            print(
+                f"\nValidation failed: {len(diagnostics)} issue(s) "
+                "across 1 file(s).",
+                file=sys.stderr,
+            )
+            return 1
+
+        try:
+            prompt = CRITIQUE_PROMPT_PATH.read_text(encoding="utf-8")
+            protocol = PROTOCOL_PATH.read_text(encoding="utf-8")
+        except OSError as exc:
+            print(
+                f"Critique configuration unavailable: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+
+        if not prompt.strip() or not protocol.strip():
+            print(
+                "Critique configuration unavailable: prompt and protocol "
+                "must not be empty.",
+                file=sys.stderr,
+            )
+            return 1
+
+        try:
+            api_key = load_openai_api_key()
+        except OSError as exc:
+            print(f"Could not read .env: {exc}", file=sys.stderr)
+            return 1
+
+        if api_key is None:
+            print(
+                "OPENAI_API_KEY is required in the environment or ./.env.",
+                file=sys.stderr,
+            )
+            return 1
+
+        report, failures = generate_critique_report(
+            path,
+            text,
+            prompt,
+            protocol,
+            api_key,
+        )
+        sys.stdout.write(report)
+        for failure in failures:
+            print(f"Critique unavailable: {failure}", file=sys.stderr)
+        return 1 if failures else 0
 
     if args.scoresheet:
         if len(args.paths) != 1 or args.paths[0].is_dir():

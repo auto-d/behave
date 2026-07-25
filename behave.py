@@ -18,6 +18,7 @@ import json
 import os
 import re
 import sys
+import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Iterable, Sequence
@@ -63,6 +64,15 @@ PROTOCOL_PATH = TOOL_DIRECTORY / "PROTOCOL.md"
 CRITIQUE_PROMPT_PATH = TOOL_DIRECTORY / "CRITIQUE_PROMPT.md"
 OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
 CRITIQUE_MODEL = "gpt-5.6-sol"
+CRITIQUE_REASONING_EFFORT = "high"
+CRITIQUE_REASONING_EFFORTS = (
+    "none",
+    "minimal",
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+)
 CRITIQUE_TIMEOUT = 120.0
 CRITIQUE_MAX_OUTPUT_TOKENS = 8192
 NO_FINDINGS_TEXT = "_No material evaluability issues identified._"
@@ -134,6 +144,21 @@ class RequirementSummary:
     identifier: str
     path: str
     line: int
+
+
+@dataclass(frozen=True)
+class CritiqueUsage:
+    input_tokens: int | None = None
+    reasoning_tokens: int | None = None
+    output_tokens: int | None = None
+    total_tokens: int | None = None
+
+
+@dataclass(frozen=True)
+class CritiqueResult:
+    text: str
+    latency_seconds: float
+    usage: CritiqueUsage
 
 
 class CritiqueError(Exception):
@@ -676,12 +701,71 @@ def critique_instructions(prompt: str, protocol: str) -> str:
     )
 
 
+def integer_value(value: object) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def critique_usage(response_payload: dict[str, object]) -> CritiqueUsage:
+    """Extract token usage from a Responses API payload when available."""
+    usage = response_payload.get("usage")
+    if not isinstance(usage, dict):
+        return CritiqueUsage()
+
+    input_tokens = integer_value(usage.get("input_tokens"))
+    output_tokens = integer_value(usage.get("output_tokens"))
+    total_tokens = integer_value(usage.get("total_tokens"))
+    reasoning_tokens = integer_value(usage.get("reasoning_tokens"))
+
+    output_details = usage.get("output_tokens_details")
+    if reasoning_tokens is None and isinstance(output_details, dict):
+        reasoning_tokens = integer_value(output_details.get("reasoning_tokens"))
+
+    return CritiqueUsage(
+        input_tokens=input_tokens,
+        reasoning_tokens=reasoning_tokens,
+        output_tokens=output_tokens,
+        total_tokens=total_tokens,
+    )
+
+
+def format_seconds(value: float) -> str:
+    return f"{value:.1f}s"
+
+
+def format_count(value: int | None) -> str:
+    return f"{value:,}" if value is not None else "unknown"
+
+
+def usage_summary(usage: CritiqueUsage) -> str:
+    return (
+        f"input `{format_count(usage.input_tokens)}`, "
+        f"reasoning `{format_count(usage.reasoning_tokens)}`, "
+        f"output `{format_count(usage.output_tokens)}`, "
+        f"total `{format_count(usage.total_tokens)}`"
+    )
+
+
+def add_usage(left: CritiqueUsage, right: CritiqueUsage) -> CritiqueUsage:
+    def combine(first: int | None, second: int | None) -> int | None:
+        if first is None and second is None:
+            return None
+        return (first or 0) + (second or 0)
+
+    return CritiqueUsage(
+        input_tokens=combine(left.input_tokens, right.input_tokens),
+        reasoning_tokens=combine(left.reasoning_tokens, right.reasoning_tokens),
+        output_tokens=combine(left.output_tokens, right.output_tokens),
+        total_tokens=combine(left.total_tokens, right.total_tokens),
+    )
+
+
 def request_critique(
     api_key: str,
     instructions: str,
     requirement: RequirementExcerpt,
+    reasoning_effort: str = CRITIQUE_REASONING_EFFORT,
     timeout: float = CRITIQUE_TIMEOUT,
-) -> str:
+) -> CritiqueResult:
     """Request one requirement critique through the OpenAI Responses API."""
     input_payload = json.dumps(
         {
@@ -694,7 +778,7 @@ def request_critique(
         "model": CRITIQUE_MODEL,
         "instructions": instructions,
         "input": input_payload,
-        "reasoning": {"effort": "high"},
+        "reasoning": {"effort": reasoning_effort},
         "text": {"verbosity": "low"},
         "store": False,
         "max_output_tokens": CRITIQUE_MAX_OUTPUT_TOKENS,
@@ -711,8 +795,10 @@ def request_critique(
     )
 
     try:
+        started = time.monotonic()
         with urlopen(request, timeout=timeout) as response:
             response_payload = json.loads(response.read().decode("utf-8"))
+        latency_seconds = time.monotonic() - started
     except HTTPError as exc:
         raise CritiqueError(f"OpenAI API returned HTTP {exc.code}") from exc
     except URLError as exc:
@@ -751,7 +837,11 @@ def request_critique(
     combined = "".join(output_text)
     if not combined.strip():
         raise CritiqueError("OpenAI API response contained no output text")
-    return combined
+    return CritiqueResult(
+        text=combined,
+        latency_seconds=latency_seconds,
+        usage=critique_usage(response_payload),
+    )
 
 
 def unavailable_critique_fragment(identifier: str, message: str) -> str:
@@ -765,6 +855,7 @@ def generate_critique_report(
     protocol: str,
     api_key: str,
     requirement_id: str | None = None,
+    reasoning_effort: str = CRITIQUE_REASONING_EFFORT,
 ) -> tuple[str, list[str]]:
     """Generate a report and return any per-requirement failure diagnostics."""
     instructions = critique_instructions(prompt, protocol)
@@ -777,6 +868,9 @@ def generate_critique_report(
         ]
     fragments: list[str] = []
     failures: list[str] = []
+    api_calls = 0
+    total_latency = 0.0
+    total_usage = CritiqueUsage()
 
     for summary in summaries:
         requirement = requirement_excerpts(
@@ -785,10 +879,11 @@ def generate_critique_report(
             summary.identifier,
         )[0]
         try:
-            model_fragment = request_critique(
+            result = request_critique(
                 api_key,
                 instructions,
                 requirement,
+                reasoning_effort,
             )
         except CritiqueError as exc:
             failures.append(f"{summary.identifier}: {exc}")
@@ -800,25 +895,41 @@ def generate_critique_report(
             )
             continue
 
+        api_calls += 1
+        total_latency += result.latency_seconds
+        total_usage = add_usage(total_usage, result.usage)
+
         try:
             accepted_fragment = validate_critique_fragment(
                 summary.identifier,
-                model_fragment,
+                result.text,
                 critique_targets(requirement.markdown),
             )
         except ValueError as exc:
             failures.append(
                 f"{summary.identifier}: model response was malformed: {exc}"
             )
+            fragment_metadata = (
+                f"> API calls: `1`\n"
+                f"> Latency: `{format_seconds(result.latency_seconds)}`\n"
+                f"> Tokens: {usage_summary(result.usage)}"
+            )
             fragments.append(
                 unavailable_critique_fragment(
                     summary.identifier,
                     MALFORMED_RESPONSE_TEXT,
                 )
+                + "\n\n"
+                + fragment_metadata
             )
             continue
 
-        fragments.append(accepted_fragment)
+        fragment_metadata = (
+            f"> API calls: `1`\n"
+            f"> Latency: `{format_seconds(result.latency_seconds)}`\n"
+            f"> Tokens: {usage_summary(result.usage)}"
+        )
+        fragments.append(accepted_fragment + "\n\n" + fragment_metadata)
 
     escaped_path = str(path).replace("`", "\\`")
     header = "\n".join(
@@ -827,7 +938,10 @@ def generate_critique_report(
             "",
             f"> Source specification: `{escaped_path}`",
             f"> Model: `{CRITIQUE_MODEL}`",
-            "> Reasoning effort: `high`",
+            f"> Reasoning effort: `{reasoning_effort}`",
+            f"> Total latency: `{format_seconds(total_latency)}`",
+            f"> API calls: `{api_calls}`",
+            f"> Total tokens: {usage_summary(total_usage)}",
         ]
     )
     report = header + "\n\n" + "\n\n".join(fragments) + "\n"
@@ -1151,6 +1265,15 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="R-ID",
         help="with --critique, critique only one requirement by exact ID",
     )
+    parser.add_argument(
+        "--critique-reasoning-effort",
+        choices=CRITIQUE_REASONING_EFFORTS,
+        metavar="EFFORT",
+        help=(
+            "with --critique, set Responses API reasoning effort "
+            f"(default: {CRITIQUE_REASONING_EFFORT})"
+        ),
+    )
     return parser
 
 
@@ -1176,6 +1299,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
     elif args.critique_requirement:
         parser.error("--critique-requirement requires --critique")
+    elif args.critique_reasoning_effort is not None:
+        parser.error("--critique-reasoning-effort requires --critique")
 
     if args.critique:
         path = args.paths[0]
@@ -1260,6 +1385,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             protocol,
             api_key,
             args.critique_requirement,
+            args.critique_reasoning_effort or CRITIQUE_REASONING_EFFORT,
         )
         sys.stdout.write(report)
         for failure in failures:

@@ -212,6 +212,12 @@ class CritiqueRequestTests(unittest.TestCase):
         )[0]
         response_payload = {
             "status": "completed",
+            "usage": {
+                "input_tokens": 4812,
+                "output_tokens": 126,
+                "total_tokens": 5962,
+                "output_tokens_details": {"reasoning_tokens": 1024},
+            },
             "output": [
                 {
                     "type": "message",
@@ -231,20 +237,29 @@ class CritiqueRequestTests(unittest.TestCase):
         with mock.patch(
             "behave.urlopen",
             return_value=FakeResponse(response_payload),
-        ) as mocked_urlopen:
-            output = behave.request_critique(
+        ) as mocked_urlopen, mock.patch(
+            "behave.time.monotonic",
+            side_effect=[10.0, 30.3],
+        ):
+            result = behave.request_critique(
                 "secret-key",
                 "system instructions",
                 requirement,
+                "low",
             )
 
         request = mocked_urlopen.call_args.args[0]
         payload = json.loads(request.data.decode("utf-8"))
         requirement_input = json.loads(payload["input"])
 
-        self.assertEqual(no_findings("R-FIRST"), output)
+        self.assertEqual(no_findings("R-FIRST"), result.text)
+        self.assertAlmostEqual(20.3, result.latency_seconds)
+        self.assertEqual(4812, result.usage.input_tokens)
+        self.assertEqual(1024, result.usage.reasoning_tokens)
+        self.assertEqual(126, result.usage.output_tokens)
+        self.assertEqual(5962, result.usage.total_tokens)
         self.assertEqual("gpt-5.6-sol", payload["model"])
-        self.assertEqual({"effort": "high"}, payload["reasoning"])
+        self.assertEqual({"effort": "low"}, payload["reasoning"])
         self.assertEqual({"verbosity": "low"}, payload["text"])
         self.assertFalse(payload["store"])
         self.assertEqual(8192, payload["max_output_tokens"])
@@ -334,6 +349,27 @@ class CritiqueRequestTests(unittest.TestCase):
                 behave.load_openai_api_key({}, dotenv),
             )
 
+    def test_usage_extraction_tolerates_missing_fields(self) -> None:
+        self.assertEqual(
+            behave.CritiqueUsage(),
+            behave.critique_usage({"usage": {}}),
+        )
+        usage = behave.critique_usage(
+            {
+                "usage": {
+                    "input_tokens": 10,
+                    "output_tokens": 3,
+                    "total_tokens": 13,
+                    "reasoning_tokens": 2,
+                }
+            }
+        )
+
+        self.assertEqual(10, usage.input_tokens)
+        self.assertEqual(2, usage.reasoning_tokens)
+        self.assertEqual(3, usage.output_tokens)
+        self.assertEqual(13, usage.total_tokens)
+
 
 class CritiqueReportTests(unittest.TestCase):
     def test_report_calls_once_per_requirement_in_document_order(self) -> None:
@@ -343,10 +379,15 @@ class CritiqueReportTests(unittest.TestCase):
             api_key: str,
             instructions: str,
             requirement: behave.RequirementExcerpt,
+            reasoning_effort: str = behave.CRITIQUE_REASONING_EFFORT,
             timeout: float = behave.CRITIQUE_TIMEOUT,
-        ) -> str:
+        ) -> behave.CritiqueResult:
             identifiers.append(requirement.identifier)
-            return no_findings(requirement.identifier)
+            return behave.CritiqueResult(
+                no_findings(requirement.identifier),
+                1.25,
+                behave.CritiqueUsage(10, 2, 3, 15),
+            )
 
         with mock.patch("behave.request_critique", side_effect=respond):
             report, failures = behave.generate_critique_report(
@@ -355,13 +396,27 @@ class CritiqueReportTests(unittest.TestCase):
                 "prompt\n",
                 "protocol\n",
                 "secret-key",
+                reasoning_effort="medium",
             )
 
         self.assertEqual(["R-FIRST", "R-SECOND"], identifiers)
         self.assertEqual([], failures)
         self.assertLess(report.index("## R-FIRST"), report.index("## R-SECOND"))
         self.assertIn("> Model: `gpt-5.6-sol`", report)
-        self.assertIn("> Reasoning effort: `high`", report)
+        self.assertIn("> Reasoning effort: `medium`", report)
+        self.assertIn("> Total latency: `2.5s`", report)
+        self.assertIn("> API calls: `2`", report)
+        self.assertIn(
+            "> Total tokens: input `20`, reasoning `4`, output `6`, total `30`",
+            report,
+        )
+        self.assertEqual(2, report.count("> Latency: `1.2s`"))
+        self.assertEqual(
+            2,
+            report.count(
+                "> Tokens: input `10`, reasoning `2`, output `3`, total `15`"
+            ),
+        )
 
     def test_report_can_target_one_requirement(self) -> None:
         identifiers: list[str] = []
@@ -370,10 +425,15 @@ class CritiqueReportTests(unittest.TestCase):
             api_key: str,
             instructions: str,
             requirement: behave.RequirementExcerpt,
+            reasoning_effort: str = behave.CRITIQUE_REASONING_EFFORT,
             timeout: float = behave.CRITIQUE_TIMEOUT,
-        ) -> str:
+        ) -> behave.CritiqueResult:
             identifiers.append(requirement.identifier)
-            return no_findings(requirement.identifier)
+            return behave.CritiqueResult(
+                no_findings(requirement.identifier),
+                3.0,
+                behave.CritiqueUsage(20, None, 4, 24),
+            )
 
         with mock.patch("behave.request_critique", side_effect=respond):
             report, failures = behave.generate_critique_report(
@@ -389,13 +449,23 @@ class CritiqueReportTests(unittest.TestCase):
         self.assertEqual([], failures)
         self.assertNotIn("## R-FIRST", report)
         self.assertIn("## R-SECOND", report)
+        self.assertIn("> Total latency: `3.0s`", report)
+        self.assertIn("> API calls: `1`", report)
+        self.assertIn(
+            "> Tokens: input `20`, reasoning `unknown`, output `4`, total `24`",
+            report,
+        )
 
     def test_report_continues_after_request_and_template_failures(self) -> None:
         with mock.patch(
             "behave.request_critique",
             side_effect=[
                 behave.CritiqueError("offline"),
-                "## R-SECOND\n\nExtra prose.",
+                behave.CritiqueResult(
+                    "## R-SECOND\n\nExtra prose.",
+                    4.0,
+                    behave.CritiqueUsage(30, 5, 6, 41),
+                ),
             ],
         ):
             report, failures = behave.generate_critique_report(
@@ -411,6 +481,17 @@ class CritiqueReportTests(unittest.TestCase):
         self.assertIn(behave.MALFORMED_RESPONSE_TEXT, report)
         self.assertNotIn("offline", report)
         self.assertNotIn("Extra prose.", report)
+        self.assertIn("> Total latency: `4.0s`", report)
+        self.assertIn("> API calls: `1`", report)
+        self.assertIn(
+            "> Total tokens: input `30`, reasoning `5`, output `6`, total `41`",
+            report,
+        )
+        self.assertIn("> Latency: `4.0s`", report)
+        self.assertIn(
+            "> Tokens: input `30`, reasoning `5`, output `6`, total `41`",
+            report,
+        )
 
     def test_cli_rejects_invalid_spec_before_resolving_credentials(self) -> None:
         invalid = """### R-INVALID
@@ -513,6 +594,8 @@ Missing behavior.
                         "--critique",
                         "--critique-requirement",
                         "R-SECOND",
+                        "--critique-reasoning-effort",
+                        "low",
                         str(contract),
                     ]
                 )
@@ -520,6 +603,7 @@ Missing behavior.
         self.assertEqual(0, status)
         self.assertEqual(complete_report, output.getvalue())
         self.assertEqual("R-SECOND", mocked_report.call_args.args[5])
+        self.assertEqual("low", mocked_report.call_args.args[6])
 
     def test_cli_rejects_missing_target_requirement_before_credentials(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -587,6 +671,11 @@ Missing behavior.
                     "--critique",
                     "--critique-requirement",
                     "not-valid",
+                    str(contract),
+                ],
+                [
+                    "--critique-reasoning-effort",
+                    "low",
                     str(contract),
                 ],
             ]

@@ -235,15 +235,26 @@ OPENAI_API_KEY=...
 ```
 
 Critique mode sends the complete local `PROTOCOL.md` and one requirement at a
-time to `gpt-5.6-sol` with high reasoning. It does not retrieve the contents of
-documents named in `References`; the requirement and its references remain
-authoritative as written.
+time to `gpt-5.6-sol` with `high` reasoning by default. It does not retrieve
+the contents of documents named in `References`; the requirement and its
+references remain authoritative as written.
 
 To critique only one requirement while iterating, pass its exact identifier:
 
 ```sh
 $ python3 behave.py --critique --critique-requirement R-EXAMPLE behavior.md
 ```
+
+To compare latency, token cost, and diagnostic quality, override the reasoning
+effort for a run:
+
+```sh
+$ python3 behave.py --critique --critique-requirement R-EXAMPLE --critique-reasoning-effort low behavior.md
+```
+
+The accepted effort names are `none`, `minimal`, `low`, `medium`, `high`, and
+`xhigh`. Support is model-specific; unsupported values fail through the API
+response.
 
 A report with no findings looks like:
 
@@ -253,10 +264,17 @@ A report with no findings looks like:
 > Source specification: `behavior.md`
 > Model: `gpt-5.6-sol`
 > Reasoning effort: `high`
+> Total latency: `20.3s`
+> API calls: `1`
+> Total tokens: input `4,812`, reasoning `1,024`, output `126`, total `5,962`
 
 ## R-EXAMPLE
 
 _No material evaluability issues identified._
+
+> API calls: `1`
+> Latency: `20.3s`
+> Tokens: input `4,812`, reasoning `1,024`, output `126`, total `5,962`
 ```
 
 A material issue is tied to its behavior or Evaluate clause using document

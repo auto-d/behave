@@ -154,6 +154,15 @@ class RequirementSummary:
 
 
 @dataclass(frozen=True)
+class ScoresheetCriterion:
+    requirement_id: str
+    target: str
+    line: int
+    statement: str
+    annotations: str | None = None
+
+
+@dataclass(frozen=True)
 class CritiqueUsage:
     input_tokens: int | None = None
     reasoning_tokens: int | None = None
@@ -1341,37 +1350,147 @@ def evaluation_body_end(
     return end_index
 
 
-def render_scoresheet(path: Path, text: str) -> str:
-    """Return a Markdown scoresheet for a validated specification."""
+def normalize_criterion_statement(
+    lines: Sequence[str],
+    start_index: int,
+    end_index: int,
+    inline_body: str,
+) -> str:
+    parts: list[str] = []
+    if inline_body.strip():
+        parts.append(inline_body.strip())
+
+    for raw in lines[start_index + 1 : end_index + 1]:
+        stripped = raw.strip()
+        if stripped:
+            parts.append(stripped)
+
+    return " ".join(parts)
+
+
+def scoresheet_criteria(text: str) -> list[ScoresheetCriterion]:
+    """
+    Return criteria in document order with stable behavior/evaluation targets.
+
+    Callers should validate the specification before using these locations.
+    """
     lines = text.splitlines()
-    insertions: dict[int, list[tuple[str, str]]] = {}
-
-    for start, indent, raw_indent, marker in evaluation_locations(text):
-        end = evaluation_body_end(lines, start, indent)
-        insertions.setdefault(end, []).append((raw_indent, marker))
-
-    escaped_path = str(path).replace("`", "\\`")
-    output = [
-        (
-            "> **Behave scoresheet.** Replace each placeholder with links "
-            "to native evidence artifacts."
-        ),
-        f"> Source specification: `{escaped_path}`",
-        "",
-    ]
+    criteria: list[ScoresheetCriterion] = []
+    current_requirement: str | None = None
+    current_section: str | None = None
+    behavior_indent: int | None = None
+    behavior_number = 0
+    evaluation_number = 0
 
     for index, raw in enumerate(lines):
-        output.append(raw)
-        for raw_indent, marker in insertions.get(index, []):
-            output.extend(
-                [
-                    f"{raw_indent}  {marker} Evidence:",
-                    (
-                        f"{raw_indent}    {marker} "
-                        "_No evidence linked yet._"
-                    ),
-                ]
+        requirement_match = REQUIREMENT_RE.match(raw)
+        if requirement_match:
+            current_requirement = requirement_match.group(1)
+            current_section = None
+            behavior_indent = None
+            behavior_number = 0
+            evaluation_number = 0
+            continue
+
+        section_match = SECTION_RE.match(raw)
+        if section_match:
+            current_section = section_match.group(1)
+            behavior_indent = None
+            continue
+
+        if LEVEL_FOUR_RE.match(raw):
+            current_section = None
+            continue
+
+        if current_requirement is None or current_section != "Behavior":
+            continue
+
+        item = LIST_ITEM_RE.match(raw)
+        if not item:
+            continue
+
+        indent = indentation_width(item.group("indent"))
+        item_text = item.group("text").strip()
+        evaluate_match = EVALUATE_RE.match(item_text)
+
+        if behavior_indent is None:
+            behavior_indent = indent
+
+        if indent == behavior_indent:
+            behavior_number += 1
+            evaluation_number = 0
+            continue
+
+        if not evaluate_match:
+            continue
+
+        evaluation_number += 1
+        end_index = evaluation_body_end(lines, index, indent)
+        statement = normalize_criterion_statement(
+            lines,
+            index,
+            end_index,
+            evaluate_match.group("body"),
+        )
+        criteria.append(
+            ScoresheetCriterion(
+                requirement_id=current_requirement,
+                target=f"B{behavior_number}.E{evaluation_number}",
+                line=index + 1,
+                statement=statement,
+                annotations=evaluate_match.group("annotations"),
             )
+        )
+
+    return criteria
+
+
+def markdown_cell(value: str | None) -> str:
+    if not value:
+        return ""
+    return value.replace("|", "\\|").replace("\n", " ")
+
+
+def render_scoresheet(path: Path, text: str) -> str:
+    """Return a Markdown scoresheet for a validated specification."""
+    escaped_path = str(path).replace("`", "\\`")
+    output = [
+        "# Behave conformance scoresheet",
+        "",
+        f"> Source specification: `{escaped_path}`",
+        "> Fill one row per evaluation criterion with implementation evidence.",
+        "",
+        (
+            "| Requirement | Target | Criterion | Evidence hint | "
+            "Conformance | Evidence | Notes |"
+        ),
+        "|---|---|---|---|---|---|---|",
+    ]
+
+    for criterion in scoresheet_criteria(text):
+        output.append(
+            "| "
+            f"`{criterion.requirement_id}` | "
+            f"`{criterion.target}` | "
+            f"{markdown_cell(criterion.statement)} | "
+            f"{markdown_cell(criterion.annotations)} | "
+            "TBD | TBD |  |"
+        )
+
+    output.extend(
+        [
+            "",
+            (
+                "Conformance values are implementation-supplied, for example "
+                "`pass`, `fail`, `partial`, `n/a`, or `unknown`."
+            ),
+            (
+                "Evidence should link to native artifacts such as test results, "
+                "measurements, reports, screenshots, telemetry, session captures, "
+                "or API responses."
+            ),
+        ]
+    )
 
     return "\n".join(output).rstrip() + "\n"
 
@@ -1585,7 +1704,7 @@ def build_parser() -> argparse.ArgumentParser:
     query_group.add_argument(
         "--scoresheet",
         action="store_true",
-        help="print an evidence-link scoresheet for one valid specification",
+        help="print a conformance scoresheet for one valid specification",
     )
     query_group.add_argument(
         "--critique",

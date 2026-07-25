@@ -199,19 +199,29 @@ Generate a Markdown scoresheet from one valid specification:
 $ python3 behave.py --scoresheet behavior.md > scoresheet.md
 ```
 
-The generated file preserves the complete specification and adds an evidence
-area beneath every criterion:
+The generated file is a compact conformance submission table with one row per
+evaluation criterion:
 
 ```md
-  - Evaluate: Each endpoint produces a documented HTTP status code.
-    - Evidence:
-      - _No evidence linked yet._
+| Requirement | Target | Criterion | Evidence hint | Conformance | Evidence | Notes |
+|---|---|---|---|---|---|---|
+| `R-EXAMPLE` | `B1.E1` | Each endpoint produces a documented HTTP status code. |  | TBD | TBD |  |
 ```
 
-Replace each placeholder with links to implementation-appropriate artifacts
-such as test results, measurements, reports, screenshots, or session captures.
-Scoresheets are deterministic and written to standard output. They do not
-assign scores or statuses, interpret evidence, or prescribe artifact formats.
+Fill each row with the implementation's conformance claim and links to
+implementation-appropriate artifacts such as test results, measurements,
+reports, screenshots, telemetry exports, session captures, or API responses.
+For example, a completed row might look like:
+
+```md
+| `R-EXAMPLE` | `B1.E1` | Each endpoint produces a documented HTTP status code. |  | pass | [CI run 124](artifacts/ci-124.md) | Covers `/health` and `/ready`. |
+```
+
+Scoresheets are deterministic and written to standard output. They preserve
+criterion text, opaque annotation contents as evidence hints, and stable
+document-order targets such as `B1.E1`; they do not copy supplemental
+specification prose, assign scores, inspect evidence, or prescribe artifact
+formats.
 
 The tool checks document structure. It does not execute evaluations, bind them
 to tests, inspect evidence, interpret annotation hints, or determine whether an
@@ -267,6 +277,15 @@ To limit cost during tuning, provide a comma-separated effort list:
 
 ```sh
 $ python3 behave.py --critique-reasoning-eval R-EXAMPLE --critique-reasoning-efforts low,medium behavior.md
+```
+
+The output is a Markdown table:
+
+```md
+| Effort | Findings | Critique latency | Critique reasoning tokens | Critique total tokens | Score | Score latency | Score total tokens | Note |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| `low` | 4 | 7.1s | 366 | 2,843 | 8.0 | 6.4s | 2,410 | Finds the main material gaps with concise wording. |
+| `medium` | 4 | 11.7s | 516 | 3,002 | 8.5 | 6.8s | 2,438 | Same coverage as low with slightly sharper precision. |
 ```
 
 The table uses a ten-point rubric: material coverage is worth four points,

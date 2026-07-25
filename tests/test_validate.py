@@ -411,33 +411,47 @@ Reviewers need the governing context.
       to support review.
 """
 
-    def test_scoresheet_preserves_context_and_adds_evidence_slots(self) -> None:
+    def test_scoresheet_extracts_compact_conformance_rows(self) -> None:
         output = behave.render_scoresheet(
             Path("contract.md"),
             self.document,
         )
 
-        self.assertIn("# Example Contract", output)
-        self.assertIn("Context needed to review the evidence.", output)
-        self.assertIn("#### Rationale", output)
-        self.assertIn("- `reference.md`", output)
-        self.assertIn("Evaluate [evidence=response]", output)
-        self.assertEqual(2, output.count("_No evidence linked yet._"))
+        self.assertIn("# Behave conformance scoresheet", output)
         self.assertIn("Source specification: `contract.md`", output)
+        self.assertIn(
+            "| Requirement | Target | Criterion | Evidence hint | "
+            "Conformance | Evidence | Notes |",
+            output,
+        )
+        self.assertIn(
+            "| `R-SCORESHEET` | `B1.E1` | The result uses the documented "
+            "format. | evidence=response | TBD | TBD |  |",
+            output,
+        )
+        self.assertIn(
+            "| `R-SCORESHEET` | `B1.E2` | The result contains enough detail "
+            "to support review. |  | TBD | TBD |  |",
+            output,
+        )
+        self.assertNotIn("Context needed to review the evidence.", output)
+        self.assertNotIn("Reviewers need the governing context.", output)
+        self.assertNotIn("- `reference.md`", output)
+        self.assertNotIn("_No evidence linked yet._", output)
+
+    def test_scoresheet_criteria_preserve_document_order_and_lines(self) -> None:
+        criteria = behave.scoresheet_criteria(self.document)
+
         self.assertEqual(
-            [],
-            behave.validate_text(Path("scoresheet.md"), output),
+            ["B1.E1", "B1.E2"],
+            [criterion.target for criterion in criteria],
         )
-
-    def test_multiline_criterion_precedes_its_evidence_slot(self) -> None:
-        output = behave.render_scoresheet(
-            Path("contract.md"),
-            self.document,
+        self.assertEqual("evidence=response", criteria[0].annotations)
+        self.assertEqual(
+            "The result contains enough detail to support review.",
+            criteria[1].statement,
         )
-
-        detail = output.index("to support review.")
-        evidence = output.rindex("    - Evidence:")
-        self.assertLess(detail, evidence)
+        self.assertLess(criteria[0].line, criteria[1].line)
 
     def test_scoresheet_cli_prints_markdown_for_valid_specification(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -452,7 +466,7 @@ Reviewers need the governing context.
         self.assertTrue(output.getvalue().endswith("\n"))
         self.assertEqual(
             2,
-            output.getvalue().count("_No evidence linked yet._"),
+            output.getvalue().count("| `R-SCORESHEET` |"),
         )
 
     def test_scoresheet_cli_rejects_invalid_spec_without_output(self) -> None:
